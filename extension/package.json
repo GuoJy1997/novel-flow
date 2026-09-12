@@ -1,0 +1,49 @@
+{
+  "name": "novel-pipeline-studio",
+  "displayName": "笔心小说工作流 Studio",
+  "description": "由宿主 Agent 工具驱动的工业化小说可视化生产工作流平台",
+  "version": "1.0.0",
+  "publisher": "novel-agent",
+  "engines": {
+    "vscode": "^1.80.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onView:novelStudio.mainView"
+  ],
+  "main": "./extension.js",
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "novel-studio-sidebar",
+          "title": "小说工坊 (Novel Studio)",
+          "icon": "media/icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "novel-studio-sidebar": [
+        {
+          "type": "webview",
+          "id": "novelStudio.mainView",
+          "name": "工作流画布与审阅"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "novelStudio.openBrowser",
+        "title": "在独立浏览器中打开 Novel Studio"
+      },
+      {
+        "command": "novelStudio.restartServer",
+        "title": "重启 Novel Studio 后端服务"
+      }
+    ]
+  },
+  "scripts": {},
+  "dependencies": {}
+}

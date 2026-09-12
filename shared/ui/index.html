@@ -1,0 +1,333 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>小说可视化工作流 Studio (Antigravity 宿主驱动)</title>
+  <link rel="stylesheet" href="studio.css">
+</head>
+<body>
+  <div class="studio-layout">
+    <!-- 顶部导航栏 -->
+    <header class="studio-topbar">
+      <div class="brand-group">
+        <div class="brand-badge">
+          <svg class="feather-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M12 19l7-7 3 3-7 7-3-3z"></path>
+            <path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z"></path>
+            <path d="M2 2l7.586 7.586"></path>
+            <circle cx="11" cy="11" r="2"></circle>
+          </svg>
+          <span>笔心 Studio</span>
+        </div>
+        <span class="brand-sub">小说工坊 · 宿主 Agent 驱动</span>
+      </div>
+
+      <div class="project-selector-group">
+        <label for="projectSelect">小说课题：</label>
+        <select id="projectSelect" class="studio-select">
+          <option value="">加载课题列表中...</option>
+        </select>
+        <button id="btnOpenNewProjectModal" class="btn btn-secondary" title="初始化一本新的小说工程">➕ 新建小说</button>
+        <button id="btnOpenAddPathModal" class="btn btn-secondary" title="关联外部已存在的小说目录">📂 关联目录</button>
+      </div>
+
+      <!-- 动态目标章节切换器 -->
+      <div class="chapter-selector-group">
+        <label for="chapterInput">目标章节：</label>
+        <button id="btnPrevChapter" class="btn btn-secondary btn-sm" title="上一章">◀</button>
+        <div class="chapter-input-wrap">
+          <span>第</span>
+          <input type="number" id="chapterInput" class="studio-input chapter-input" value="1" min="1" max="999" title="输入章节号后回车快速切换" />
+          <span>章</span>
+        </div>
+        <button id="btnNextChapter" class="btn btn-secondary btn-sm" title="下一章">▶</button>
+      </div>
+
+      <div class="topbar-actions">
+        <button id="btnOpenAddNodeModal" class="btn btn-secondary">➕ 添加节点</button>
+        <button id="btnSaveGraph" class="btn btn-primary" title="保存节点配置并更新 graph.yaml">💾 保存配置</button>
+        <button id="btnRefreshStatus" class="btn btn-secondary" title="重新计算哈希与状态">🔄 刷新状态</button>
+        <button id="btnReconcile" class="btn btn-secondary" title="全量重新校验物理基线">⚡ 校准基线</button>
+        <span class="topbar-divider"></span>
+        <button id="btnToggleReader" class="btn btn-accent" title="查看草稿、正文与审查报告">📖 章节审阅</button>
+        <button id="btnToggleTerminal" class="btn btn-secondary" title="查看引擎底层实时输出">💻 实时终端</button>
+      </div>
+    </header>
+
+    <!-- 主体区域：画布视口 -->
+    <main class="studio-main">
+      <div id="canvasViewport" class="canvas-viewport">
+        <!-- 背景点阵由 CSS 绘制 -->
+        <svg id="edgesSvg" class="edges-svg">
+          <defs>
+            <marker id="arrow-default" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+              <path d="M 0 1 L 9 5 L 0 9 z" fill="#64748b" />
+            </marker>
+            <marker id="arrow-current" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+              <path d="M 0 1 L 9 5 L 0 9 z" fill="#10b981" />
+            </marker>
+            <marker id="arrow-stale" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+              <path d="M 0 1 L 9 5 L 0 9 z" fill="#f59e0b" />
+            </marker>
+            <marker id="arrow-active" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+              <path d="M 0 1 L 9 5 L 0 9 z" fill="#06b6d4" />
+            </marker>
+          </defs>
+          <g id="edgesGroup">
+            <!-- 临时连线预览（置于组内，共享 translate & scale 坐标变换） -->
+            <path id="tempEdge" class="temp-edge" d="" />
+          </g>
+        </svg>
+
+        <!-- DOM 节点渲染层 -->
+        <div id="nodesLayer" class="nodes-layer"></div>
+
+        <!-- 连线交互指引条 -->
+        <div id="connectTipBar" class="connect-tip-bar hidden">
+          <span>🔗 正在连线：按住拖拽至目标节点释放，或点击目标节点连入（按 ESC 键取消）</span>
+          <button id="btnCancelConnect" class="btn btn-sm btn-secondary">取消</button>
+        </div>
+
+        <!-- 画布浮动控制工具栏 -->
+        <div class="canvas-floating-toolbar">
+          <button id="btnZoomIn" class="btn-icon" title="放大">+</button>
+          <button id="btnZoomReset" class="btn-icon" title="重置缩放">100%</button>
+          <button id="btnZoomOut" class="btn-icon" title="缩小">-</button>
+          <button id="btnAutoLayout" class="btn-icon" title="自动拓扑排布">拓扑</button>
+        </div>
+      </div>
+
+      <!-- 右侧属性抽屉 Inspector -->
+      <aside id="inspectorDrawer" class="inspector-drawer">
+        <div class="inspector-header">
+          <div class="inspector-title-row">
+            <span id="inspectorKindBadge" class="kind-badge">agent</span>
+            <h3 id="inspectorNodeId">节点属性</h3>
+          </div>
+          <div class="inspector-status-row">
+            <span id="inspectorStatusPill" class="status-pill status-stale">stale</span>
+            <span id="inspectorStatusReason" class="status-reason"></span>
+          </div>
+          <button id="btnCloseInspector" class="btn-close">&times;</button>
+        </div>
+
+        <div class="inspector-body">
+          <!-- 核心操作按钮组 -->
+          <div class="inspector-action-box">
+            <button id="btnDispatchHost" class="btn btn-primary btn-block">🚀 在 Antigravity 中执行</button>
+            <button id="btnCopyPrompt" class="btn btn-secondary btn-block">📋 复制 Agent 任务指令</button>
+          </div>
+
+          <!-- 基础设置 -->
+          <div class="form-group">
+            <label>前置依赖节点 (After):</label>
+            <div id="afterNodesContainer" class="dep-checkbox-group"></div>
+          </div>
+
+          <!-- Agent 节点特有字段 -->
+          <div id="sectionAgentFields" class="field-section">
+            <div class="form-group">
+              <label for="fieldRole">担当角色 (Role):</label>
+              <input type="text" id="fieldRole" class="studio-input" placeholder="例如: 长篇连载作家 / 去AI味审校" />
+            </div>
+            <div class="form-group">
+              <label for="fieldPrompt">核心任务指令 (Prompt):</label>
+              <textarea id="fieldPrompt" class="studio-textarea" rows="6" placeholder="编写该节点的大模型执行指令..."></textarea>
+            </div>
+            <div class="form-group">
+              <label for="fieldSkills">绑定技能 (Skills, 逗号分隔):</label>
+              <input type="text" id="fieldSkills" class="studio-input" placeholder="例如: novel-suspense-hook, scene-pacing" />
+            </div>
+          </div>
+
+          <!-- Command 节点特有字段 -->
+          <div id="sectionCommandFields" class="field-section hidden">
+            <div class="form-group">
+              <label for="fieldRun">命令行参数 (Run argv, 空格分隔):</label>
+              <input type="text" id="fieldRun" class="studio-input" placeholder="python shared/novel_stats.py" />
+            </div>
+          </div>
+
+          <!-- Human 节点特有字段 -->
+          <div id="sectionHumanFields" class="field-section hidden">
+            <div class="form-group">
+              <label for="fieldAsk">人工审查说明 (Ask):</label>
+              <textarea id="fieldAsk" class="studio-textarea" rows="3" placeholder="写明作者需要核验的关注点..."></textarea>
+            </div>
+          </div>
+
+          <!-- 输入与输出文件契约 -->
+          <div class="form-group">
+            <label for="fieldInputs">输入文件契约 (Inputs, 逗号分隔):</label>
+            <input type="text" id="fieldInputs" class="studio-input" placeholder="outline.md, relations.md" />
+          </div>
+
+          <div class="form-group">
+            <label for="fieldOutputs">产出文件契约 (Outputs, 逗号分隔):</label>
+            <input type="text" id="fieldOutputs" class="studio-input" placeholder="drafts/ch_01_raw.md" />
+          </div>
+
+          <!-- 质量硬断言 Assert -->
+          <div class="form-group">
+            <label>质量硬断言配置 (Asserts):</label>
+            <div class="assert-grid">
+              <div>
+                <label class="sub-label">最低字数:</label>
+                <input type="number" id="fieldAssertMinWords" class="studio-input" placeholder="2500" />
+              </div>
+              <div>
+                <label class="sub-label">最高字数:</label>
+                <input type="number" id="fieldAssertMaxWords" class="studio-input" placeholder="4500" />
+              </div>
+              <div>
+                <label class="sub-label">最低评分:</label>
+                <input type="number" id="fieldAssertMinScore" class="studio-input" placeholder="80" />
+              </div>
+              <div>
+                <label class="sub-label">评分键名:</label>
+                <input type="text" id="fieldAssertScoreField" class="studio-input" placeholder="overall" />
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="inspector-footer">
+          <button id="btnSaveNode" class="btn btn-primary">保存修改</button>
+          <button id="btnDeleteNode" class="btn btn-danger">删除节点</button>
+        </div>
+      </aside>
+    </main>
+
+    <!-- 底部终端日志抽屉 -->
+    <footer id="terminalDrawer" class="terminal-drawer collapsed">
+      <div class="terminal-header">
+        <div class="terminal-title">
+          <span class="terminal-dot"></span>
+          <span>流水线底层执行日志 (SSE Stream)</span>
+        </div>
+        <div class="terminal-tools">
+          <button id="btnClearLog" class="btn btn-sm btn-secondary">清空日志</button>
+          <button id="btnCloseTerminal" class="btn btn-sm btn-secondary">折叠</button>
+        </div>
+      </div>
+      <div id="terminalLogs" class="terminal-logs"></div>
+    </footer>
+  </div>
+
+  <!-- 模态框：新建小说工程 -->
+  <div id="createProjectModal" class="modal-backdrop hidden">
+    <div class="modal-dialog">
+      <div class="modal-header">
+        <h3>初始化小说新工程</h3>
+        <button id="btnCloseCreateProjectModal" class="btn-close">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div class="form-group">
+          <label for="newProjSlug">工程英文标识 (Slug, 唯一目录名):</label>
+          <input type="text" id="newProjSlug" class="studio-input" placeholder="e.g. xinghai-guzhou" />
+        </div>
+        <div class="form-group">
+          <label for="newProjTitle">小说中文标题:</label>
+          <input type="text" id="newProjTitle" class="studio-input" placeholder="e.g. 星海孤舟" />
+        </div>
+        <div class="form-group">
+          <label for="newProjGenre">题材流派:</label>
+          <input type="text" id="newProjGenre" class="studio-input" placeholder="e.g. 科幻悬疑 / 东方玄幻 / 赛博朋克" value="科幻悬疑" />
+        </div>
+        <div class="form-group">
+          <label for="newProjProtagonist">主角姓名:</label>
+          <input type="text" id="newProjProtagonist" class="studio-input" placeholder="e.g. 陆巡" value="陆巡" />
+        </div>
+        <div class="form-group">
+          <label for="newProjLogline">一句话故事梗概 (Logline):</label>
+          <textarea id="newProjLogline" class="studio-textarea" rows="3" placeholder="写明主要矛盾与核心悬念..."></textarea>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button id="btnConfirmCreateProject" class="btn btn-primary">立即创建</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 模态框：关联外部小说目录 -->
+  <div id="addPathModal" class="modal-backdrop hidden">
+    <div class="modal-dialog">
+      <div class="modal-header">
+        <h3>关联已有小说目录</h3>
+        <button id="btnCloseAddPathModal" class="btn-close">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div class="form-group">
+          <label for="customPathInput">本地绝对路径或相对路径:</label>
+          <input type="text" id="customPathInput" class="studio-input" placeholder="D:/my-novels/book-one" />
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button id="btnConfirmAddPath" class="btn btn-primary">确认添加</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 模态框：添加新节点 -->
+  <div id="addNodeModal" class="modal-backdrop hidden">
+    <div class="modal-dialog">
+      <div class="modal-header">
+        <h3>添加流水线节点</h3>
+        <button id="btnCloseAddNodeModal" class="btn-close">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div class="form-group">
+          <label for="newNodeId">节点唯一 ID (英文下划线):</label>
+          <input type="text" id="newNodeId" class="studio-input" placeholder="e.g. deai_polish_v2" />
+        </div>
+        <div class="form-group">
+          <label for="newNodeKind">节点形态分类 (Kind):</label>
+          <select id="newNodeKind" class="studio-select">
+            <option value="agent">Agent 智能体节点 (大模型推理/写作/审查)</option>
+            <option value="command">Command 命令行节点 (本地脚本/字数统计/格式化)</option>
+            <option value="human">Human 人工审核节点 (人工闸门/审批放行)</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label for="newNodeRole">角色或任务说明:</label>
+          <input type="text" id="newNodeRole" class="studio-input" placeholder="e.g. 伏笔回收分析专家" />
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button id="btnConfirmAddNode" class="btn btn-primary">确认创建</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 模态框：章节正文审阅器 -->
+  <div id="readerModal" class="modal-backdrop hidden">
+    <div class="modal-dialog modal-xl">
+      <div class="modal-header">
+        <div class="reader-header-title">
+          <h3>📖 章节多维审阅与版本对比</h3>
+          <span id="readerFileName" class="reader-file-badge">drafts/ch_1_polished.md</span>
+        </div>
+        <button id="btnCloseReaderModal" class="btn-close">&times;</button>
+      </div>
+      <div class="modal-body reader-body">
+        <!-- 左侧选择文件 -->
+        <div class="reader-sidebar">
+          <h4>产物文件列表</h4>
+          <ul id="readerFileList" class="reader-file-nav"></ul>
+        </div>
+        <!-- 中间正文展示/编辑 -->
+        <div class="reader-editor-pane">
+          <div class="pane-bar">
+            <span id="readerWordCountBadge" class="badge">字数: 0</span>
+            <button id="btnSaveReaderContent" class="btn btn-sm btn-primary">保存修改</button>
+          </div>
+          <textarea id="readerTextarea" class="reader-textarea" spellcheck="false"></textarea>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="studio.js"></script>
+</body>
+</html>

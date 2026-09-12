@@ -1,0 +1,19 @@
+{
+  "project": "demo-novel",
+  "chapters_analyzed": 1,
+  "total_book_words": 2530,
+  "chapters": [
+    {
+      "file": "ch_01.md",
+      "total_words": 2530,
+      "paragraphs": 61,
+      "dialogue_words": 1062,
+      "dialogue_ratio_percent": 42.0,
+      "character_mentions": {
+        "林朔": 18,
+        "陆巡": 22
+      },
+      "clues_detected": []
+    }
+  ]
+}

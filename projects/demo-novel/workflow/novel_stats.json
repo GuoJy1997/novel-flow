@@ -1,0 +1,33 @@
+{
+  "project": "demo-novel",
+  "chapters_analyzed": 2,
+  "total_book_words": 5060,
+  "chapters": [
+    {
+      "file": "第01章_沉默信标.md",
+      "total_words": 2530,
+      "paragraphs": 61,
+      "dialogue_words": 1062,
+      "dialogue_ratio_percent": 42.0,
+      "character_mentions": {
+        "陆巡": 22,
+        "林朔": 18,
+        "艾拉": 8
+      },
+      "clues_detected": []
+    },
+    {
+      "file": "ch_01.md",
+      "total_words": 2530,
+      "paragraphs": 61,
+      "dialogue_words": 1062,
+      "dialogue_ratio_percent": 42.0,
+      "character_mentions": {
+        "陆巡": 22,
+        "林朔": 18,
+        "艾拉": 8
+      },
+      "clues_detected": []
+    }
+  ]
+}
