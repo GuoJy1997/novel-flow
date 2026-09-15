@@ -13,9 +13,14 @@
 ## 📖 目录
 
 - [一、 项目背景与解决痛点](#一-项目背景与解决痛点)
-- [二、 系统架构全景](#二-系统架构全景)
+- [二、 系统架构与核心机制全景](#二-系统架构与核心机制全景)
   - [2.1 分层架构图](#21-分层架构图)
-  - [2.2 仓库目录结构详解](#22-仓库目录结构详解)
+  - [2.2 核心运行机制图解 (Core Mechanisms)](#22-核心运行机制图解-core-mechanisms)
+    - [2.2.1 长篇小说工业化生产闭环机制](#221-长篇小说工业化生产闭环机制)
+    - [2.2.2 增量 SHA-256 递归状态机流转机制](#222-增量-sha-256-递归状态机流转机制)
+    - [2.2.3 跨章事实账本与知情边界守卫机制](#223-跨章事实账本与知情边界守卫机制)
+    - [2.2.4 吃书冲突排查与双向仲裁决策机制](#224-吃书冲突排查与双向仲裁决策机制)
+  - [2.3 仓库目录结构详解](#23-仓库目录结构详解)
 - [三、 运行依赖与环境准备](#三-运行依赖与环境准备)
   - [3.1 运行时环境](#31-运行时环境)
   - [3.2 依赖安装](#32-依赖安装)
@@ -55,7 +60,7 @@
 
 ---
 
-## 二、 系统架构全景
+## 二、 系统架构与核心机制全景
 
 ### 2.1 分层架构图
 
@@ -79,14 +84,17 @@ flowchart TB
         C1["DAG 调度器与依赖解析 (shared/pipeline.py)"]
         C2["增量状态机 (递归 SHA256 内容哈希探测)"]
         C3["质量硬断言器 (evaluate_asserts: 字数 / 格式 / SCORES 门禁)"]
-        C4["FastAPI 后端服务 (shared/server.py)"]
+        C4["需求澄清与最高宪法引擎 (shared/novel_clarify.py)"]
+        C5["跨章事实账本与记忆引擎 (shared/memory_engine.py)"]
+        C6["FastAPI 后端服务 (shared/server.py)"]
     end
 
     subgraph Storage_Layer["4. 文件即数据存储层 (Novel Projects Workspace)"]
-        D1["graph.yaml (声明式 DAG 拓扑与执行参数)"]
-        D2["world.md / relations.md / outline.md (设定与骨架库)"]
-        D3["drafts/ / chapters/ / workflow/ (各阶段演进物理文稿)"]
-        D4["pipeline.json (原子状态快照)"]
+        D1["novel.md (小说项目最高宪法法典)"]
+        D2["graph.yaml (声明式 DAG 拓扑与执行参数)"]
+        D3["设定/ (世界观/ 人物/ 大纲/ 事实账本/)"]
+        D4["正文/ 与 工作区/ (分卷定稿与单章物理隔离流水线)"]
+        D5["pipeline.json (原子状态快照)"]
     end
 
     Host_Layer --> Studio_Layer
@@ -94,41 +102,171 @@ flowchart TB
     Engine_Layer <--> Storage_Layer
 ```
 
-### 2.2 仓库目录结构详解
+---
+
+### 2.2 核心运行机制图解 (Core Mechanisms)
+
+#### 2.2.1 长篇小说工业化生产闭环机制
+
+系统将一部小说的生命周期分解为立项澄清、单章流水线生产、质量硬门禁、人机协同放行与跨章记忆沉淀的严密闭环：
+
+```mermaid
+flowchart TD
+    subgraph Phase_0["阶段 0：需求澄清与最高宪法立项 (Clarify & Genesis)"]
+        A1["创作者灵感 / 商业题材需求"] --> A2["六阶递进问询引导 (novel_clarify)"]
+        A2 --> A3["《小说项目最高宪法》(novel.md)"]
+        A3 --> A4["原子化设定与大纲库\n(世界观/ 人物/ 大纲/ 资产/ 事实账本)"]
+        A3 --> A5["声明式流水线拓扑 (graph.yaml)"]
+    end
+
+    subgraph Phase_1["阶段 1：单章正文流水线生产 (Chapter Pipeline)"]
+        A4 & A5 --> B1["1. 上下文蒸馏 (gather_context)\n提炼本章看点、核心矛盾、前置物理状态"]
+        B1 --> B2["2. 主笔撰写初稿 (draft_chapter)\n严格受限视角(Close Third POV)、推剧情、防剧透"]
+        B2 --> B3["3. 语言声纹去AI味润色 (deai_polish)\n对标 voice_sample.md 声纹，剔除模板排比与禁词"]
+        B3 --> B4["4. 对抗式盲审质检 (review_qc)\nOOC/战力/伏笔多维审查，输出 SCORES 评分"]
+    end
+
+    subgraph Phase_2["阶段 2：质量门禁与人机协同 (Gate & Human Review)"]
+        B4 --> C1{"硬断言门禁\nevaluate_asserts\n(字数区间 / 评分及格线)"}
+        C1 -- "未达标 (failed)" --> C2["阻断流转 / 触发双向仲裁与修改"]
+        C2 -.-> B2
+        C1 -- "达标" --> C3["5. 作者人工放行 (author_accept)\n双栏比对正文与质检报告，一键签发入库"]
+    end
+
+    subgraph Phase_3["阶段 3：正文归档与事实记忆沉淀 (Finalize & Memory Sink)"]
+        C3 --> D1["正文正式归档入库 (chapters/ch_XX.md)"]
+        D1 --> D2["0-Token 本地统计分析 (novel_stats.py)\n有效字数 / 对话占比 / 伏笔 / 词频分析"]
+        D1 --> D3["事实账本与记忆沉淀 (memory_engine.py)\n提取实体变迁、角色已知/未知、伏笔回收状态"]
+        D3 --> D4["设定/事实账本/snapshot.json\n(全书最新物理事实基线)"]
+        D4 -.->|"作为第 N+1 章前置输入"| B1
+    end
+```
+
+#### 2.2.2 增量 SHA-256 递归状态机流转机制
+
+笔心 Studio 抛弃脆弱的文件修改时间（`mtime`），基于**纯文本递归 SHA-256 哈希比对**驱动状态机，真正实现“改动哪里，重跑哪里”，未改动节点秒级跳过：
+
+```mermaid
+flowchart TD
+    subgraph Trigger["变动探测 (Hash Comparison)"]
+        T1["上游输入文件/目录变动\n(递归计算 SHA-256 内容哈希)"] --> T2{"当前哈希 == pipeline.json 记录?"}
+        T2 -- "一致 (无修改)" --> S_CURRENT["🟢 current (最新就绪)\n毫秒级增量跳过，不消耗额外算力与Token"]
+        T2 -- "不一致 (上游改动 / 产物缺失)" --> S_STALE["🟡 stale (待执行/过期)"]
+    end
+
+    subgraph Execution["节点执行与生命周期"]
+        S_STALE --> S_RUNNING["🔵 running (执行中)\nAgent 消费 Prompt / Command 运行脚本"]
+        S_RUNNING --> S_OUTPUT["产物落盘写入 outputs 指定物理文件"]
+        S_OUTPUT --> S_ASSERT{"断言求值 (evaluate_asserts)\n字数区间 / SCORES 门槛 / 必含标记"}
+        S_ASSERT -- "全部满足" --> S_PASS["记录最新 Hash 并更新 pipeline.json"]
+        S_PASS --> S_CURRENT
+        S_ASSERT -- "不达标" --> S_FAIL["🔴 failed (门禁阻断)\n下游节点保持 blocked，等待修正"]
+    end
+```
+
+#### 2.2.3 跨章事实账本与知情边界守卫机制
+
+针对长篇连载最易发生的“战力崩坏”、“角色全知早泄”与“设定吃书”痛点，系统引入事实账本快照与知情边界守卫机制：
+
+```mermaid
+flowchart LR
+    subgraph Chapter_Input["第 N 章生产产物"]
+        TXT["正式正文文稿\nchapters/ch_0N.md"]
+        QC["盲审质检报告\nworkflow/review_ch_N.md"]
+    end
+
+    subgraph Memory_Engine["事实账本与记忆引擎 (memory_engine.py)"]
+        EXTRACT["增量事实提取器\n- 实体演化 (伤势/状态/修为/装备)\n- 伏笔台账 (埋设/推进/回收)\n- 关系转变 (结盟/背叛/认知)"]
+        LEDGER["全书中央最新事实快照\n设定/事实账本/snapshot.json"]
+        HISTORY["历史章节可回溯快照\n设定/事实账本/history/snapshot_ch00N.json"]
+    end
+
+    subgraph Chapter_Next["第 N+1 章生产防线 (防吃书 / 防早泄)"]
+        BOUNDARY["知情边界守卫\n- 严禁角色知晓未获知的情报\n- 严禁全知上帝视角对白"]
+        LORE_GUARD["世界观法则与战力天花板守卫\n- 严禁突破物理常数与设定法则"]
+        CLUE_GUARD["伏笔暗线生命周期守卫\n- 未到回收章节严禁提前剧透"]
+    end
+
+    TXT & QC --> EXTRACT
+    EXTRACT --> LEDGER
+    EXTRACT --> HISTORY
+    LEDGER --> BOUNDARY & LORE_GUARD & CLUE_GUARD
+```
+
+#### 2.2.4 吃书冲突排查与双向仲裁决策机制
+
+当盲审质检或硬断言判定未通过时，系统支持双向仲裁分流策略：
+
+```mermaid
+flowchart TD
+    CONFLICT["质检节点报警 / 门禁未通过 / 发现设定冲突"] --> JUDGE{"智能体 / 创作者仲裁冲突属性"}
+    
+    JUDGE -- "分支 A：正文笔误 / 偶发 OOC / 违规禁词" --> ACTION_A["正文微调方案 (Draft Patch)\n1. 定位章节工作区草稿具体段落\n2. 精准修补正文行文偏差\n3. 重新执行质检节点验证"]
+    
+    JUDGE -- "分支 B：剧情合理演进 / 新势力突破 / 设定升阶" --> ACTION_B["设定演进回写 (Lore Evolution)\n1. 更新 设定/世界观/ 或 设定/人物/ 档案\n2. 记录突破契机并同步更新事实账本\n3. 刷新全书设定基线，保持后续一致"]
+    
+    ACTION_A --> RE_EVAL["触发增量状态机推导 (pipeline.py derive_status)"]
+    ACTION_B --> RE_EVAL
+    RE_EVAL --> DONE["断言达标，节点恢复 🟢 current，流水线解除阻塞"]
+```
+
+---
+
+### 2.3 仓库目录结构详解
 
 ```text
 novelFlow/
-├── README.md                      # 项目核心说明与使用指南（本文件）
+├── README.md                      # 项目核心说明与机制全景（本文件）
 ├── docs/                          # 深度架构与技术规格白皮书
 │   └── ARCHITECTURE.md            # 技术设计全景与设计哲学
 ├── shared/                        # 核心引擎与后端服务
 │   ├── pipeline.py                # DAG 调度器、SHA256 状态机、质量硬断言评估器
-│   ├── server.py                  # FastAPI 后端服务（图读写、SSE 日志、项目管理）
+│   ├── novel_clarify.py           # 需求澄清引擎与最高宪法 (novel.md) 编译分发
+│   ├── memory_engine.py           # 跨章事实账本、实体演化与知情状态记忆引擎
+│   ├── check_chapter_rules.py     # 章节自检规范与一票否决门禁脚本
+│   ├── server.py                  # FastAPI 后端服务（工程管理、SSE 日志、澄清接口）
 │   ├── scaffold_novel.py          # 小说项目脚手架生成器
 │   ├── novel_stats.py             # 0-Token 本地文本统计脚本 (字数/对话比/伏笔/角色分析)
-│   ├── test_pipeline.py           # 核心引擎全自动化单元测试
+│   ├── test_pipeline.py           # 状态机与流水线单元测试
+│   ├── test_clarify.py            # 需求澄清与宪法分发测试
+│   ├── test_memory_engine.py      # 事实账本与记忆快照演进测试
 │   └── ui/                        # 纯原生 Web 极简画布前端 (零构建，开箱即用)
-│       ├── index.html             # SVG 拓扑画布与双栏审阅器主界面
+│       ├── index.html             # SVG 拓扑画布、双栏审阅器与需求澄清主界面
 │       ├── studio.css             # 现代科技风暗色主题样式
 │       └── studio.js              # 画布拖拽、连线渲染与 API 交互逻辑
 ├── extension/                     # 跨 IDE 宿主插件 (VS Code / Antigravity / Cursor)
 │   ├── package.json               # 插件清单与命令贡献点
 │   ├── extension.js               # 侧边栏 Webview 容器启动与状态同步
 │   └── media/icon.svg             # 侧边栏图标
-├── skills/                        # 宿主 Agent 专有执行技能库
-│   └── novel-runner/
-│       └── SKILL.md               # 引导 Antigravity 精准消费与执行节点的操作准则
+├── skills/                        # 专业小说创作与质检技能矩阵 (20+ 技能)
+│   ├── novel-runner/              # 流水线调度运行技能
+│   ├── novel-anti-cliche/         # 反套路设计技能
+│   ├── novel-clue-foreshadowing/  # 伏笔线索追踪技能
+│   ├── novel-consistency-auditor/ # 一致性审计技能
+│   ├── novel-context-curator/     # 上下文智能蒸馏技能
+│   ├── novel-memory-ledger/       # 事实记忆账本技能
+│   ├── novel-opening-hook/        # 黄金开篇钩子技能
+│   ├── novel-pacing-evaluator/    # 叙事节奏评估技能
+│   ├── novel-plot-architect/      # 剧情架构设计技能
+│   ├── novel-sensory-grounding/   # 场景感官具象技能
+│   ├── novel-style-*/             # 番茄玄幻 / 起点悬疑等文风技能
+│   ├── story-combat-face/         # 战斗打脸长篇机制
+│   ├── story-suspense-investigation/ # 悬疑调查与反转机制
+│   └── story-deslop/              # 去 AI 味与反水文审查规范
 └── projects/                      # 小说作品工作空间
-    └── demo-novel/                # 预置开箱即用的小说示例工程
-        ├── graph.yaml             # 该小说的专属生产流配置
-        ├── world.md               # 世界观法则与设定集
-        ├── relations.md           # 角色性格档案与人际关系表
-        ├── outline.md             # 三幕故事大纲与分章细纲
-        ├── assets/
-        │   └── voice_sample.md    # 作者原汁原味的文风样本（去 AI 味校准参照）
-        ├── drafts/                # 各阶段草稿演进库 (ch_1_raw.md / ch_1_polished.md)
-        ├── chapters/              # 正式定稿入库目录 (ch_01.md)
-        └── workflow/              # 流水线中间产物 (章节任务要点 / 多维审查报告)
+    └── demo-novel/                # 预置开箱即用的小说示范工程
+        ├── novel.md               # 该作品的《最高宪法法典》
+        ├── graph.yaml             # 生产流 DAG 拓扑编排配置
+        ├── pipeline.json          # 引擎物理指纹与增量状态基线
+        ├── 设定/                  # 模块化设定库
+        │   ├── 世界观/            # 01_法则与力量体系.md / 02_地理与势力格局.md
+        │   ├── 人物/              # 01_主要人物小传.md / 02_关系矩阵.md / 03_知情状态表.md
+        │   ├── 大纲/              # 01_三幕总纲.md / 02_分卷细纲.md / 03_伏笔总台账.md
+        │   └── 事实账本/          # snapshot.json (中央快照) 与 history/ (各章切片)
+        ├── 资产/                  # voice_sample.md (文风去AI味声纹参考)
+        ├── 正文/                  # 最终入库章节（第一卷/第01章_沉默信标.md）
+        └── 工作区/                # 单章专属物理隔离工作区
+            └── 第01章/            # 状态上下文 / 粗稿 / 润色稿 / 盲审报告 / 章节统计
 ```
 
 ---

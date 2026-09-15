@@ -78,3 +78,103 @@ flowchart TB
 - `min_words` / `max_words`：中文字符数下限与上限校验；
 - `min_score` / `score_field`：评分门禁，低于门槛直接判定为 `failed` 阻止流转；
 - `contains_markers`：强制检查关键伏笔标记是否存在。
+
+---
+
+## 三、 核心运行机制流转图解
+
+### 1. 全流程长篇小说工业化生产闭环机制
+
+```mermaid
+flowchart TD
+    subgraph Phase_0["阶段 0：需求澄清与最高宪法立项 (Clarify & Genesis)"]
+        A1["创作者灵感 / 商业题材需求"] --> A2["六阶递进问询引导 (novel_clarify)"]
+        A2 --> A3["《小说项目最高宪法》(novel.md)"]
+        A3 --> A4["原子化设定与大纲库\n(世界观/ 人物/ 大纲/ 资产/ 事实账本)"]
+        A3 --> A5["声明式流水线拓扑 (graph.yaml)"]
+    end
+
+    subgraph Phase_1["阶段 1：单章正文流水线生产 (Chapter Pipeline)"]
+        A4 & A5 --> B1["1. 上下文蒸馏 (gather_context)\n提炼本章看点、核心矛盾、前置物理状态"]
+        B1 --> B2["2. 主笔撰写初稿 (draft_chapter)\n严格受限视角(Close Third POV)、推剧情、防剧透"]
+        B2 --> B3["3. 语言声纹去AI味润色 (deai_polish)\n对标 voice_sample.md 声纹，剔除模板排比与禁词"]
+        B3 --> B4["4. 对抗式盲审质检 (review_qc)\nOOC/战力/伏笔多维审查，输出 SCORES 评分"]
+    end
+
+    subgraph Phase_2["阶段 2：质量门禁与人机协同 (Gate & Human Review)"]
+        B4 --> C1{"硬断言门禁\nevaluate_asserts\n(字数区间 / 评分及格线)"}
+        C1 -- "未达标 (failed)" --> C2["阻断流转 / 触发双向仲裁与修改"]
+        C2 -.-> B2
+        C1 -- "达标" --> C3["5. 作者人工放行 (author_accept)\n双栏比对正文与质检报告，一键签发入库"]
+    end
+
+    subgraph Phase_3["阶段 3：正文归档与事实记忆沉淀 (Finalize & Memory Sink)"]
+        C3 --> D1["正文正式归档入库 (chapters/ch_XX.md)"]
+        D1 --> D2["0-Token 本地统计分析 (novel_stats.py)\n有效字数 / 对话占比 / 伏笔 / 词频分析"]
+        D1 --> D3["事实账本与记忆沉淀 (memory_engine.py)\n提取实体变迁、角色已知/未知、伏笔回收状态"]
+        D3 --> D4["设定/事实账本/snapshot.json\n(全书最新物理事实基线)"]
+        D4 -.->|"作为第 N+1 章前置输入"| B1
+    end
+```
+
+### 2. 增量 SHA-256 递归状态机流转机制
+
+```mermaid
+flowchart TD
+    subgraph Trigger["变动探测 (Hash Comparison)"]
+        T1["上游输入文件/目录变动\n(递归计算 SHA-256 内容哈希)"] --> T2{"当前哈希 == pipeline.json 记录?"}
+        T2 -- "一致 (无修改)" --> S_CURRENT["🟢 current (最新就绪)\n毫秒级增量跳过，不消耗额外算力与Token"]
+        T2 -- "不一致 (上游改动 / 产物缺失)" --> S_STALE["🟡 stale (待执行/过期)"]
+    end
+
+    subgraph Execution["节点执行与生命周期"]
+        S_STALE --> S_RUNNING["🔵 running (执行中)\nAgent 消费 Prompt / Command 运行脚本"]
+        S_RUNNING --> S_OUTPUT["产物落盘写入 outputs 指定物理文件"]
+        S_OUTPUT --> S_ASSERT{"断言求值 (evaluate_asserts)\n字数区间 / SCORES 门槛 / 必含标记"}
+        S_ASSERT -- "全部满足" --> S_PASS["记录最新 Hash 并更新 pipeline.json"]
+        S_PASS --> S_CURRENT
+        S_ASSERT -- "不达标" --> S_FAIL["🔴 failed (门禁阻断)\n下游节点保持 blocked，等待修正"]
+    end
+```
+
+### 3. 跨章事实账本与知情边界守卫机制
+
+```mermaid
+flowchart LR
+    subgraph Chapter_Input["第 N 章生产产物"]
+        TXT["正式正文文稿\nchapters/ch_0N.md"]
+        QC["盲审质检报告\nworkflow/review_ch_N.md"]
+    end
+
+    subgraph Memory_Engine["事实账本与记忆引擎 (memory_engine.py)"]
+        EXTRACT["增量事实提取器\n- 实体演化 (伤势/状态/修为/装备)\n- 伏笔台账 (埋设/推进/回收)\n- 关系转变 (结盟/背叛/认知)"]
+        LEDGER["全书中央最新事实快照\n设定/事实账本/snapshot.json"]
+        HISTORY["历史章节可回溯快照\n设定/事实账本/history/snapshot_ch00N.json"]
+    end
+
+    subgraph Chapter_Next["第 N+1 章生产防线 (防吃书 / 防早泄)"]
+        BOUNDARY["知情边界守卫\n- 严禁角色知晓未获知的情报\n- 严禁全知上帝视角对白"]
+        LORE_GUARD["世界观法则与战力天花板守卫\n- 严禁突破物理常数与设定法则"]
+        CLUE_GUARD["伏笔暗线生命周期守卫\n- 未到回收章节严禁提前剧透"]
+    end
+
+    TXT & QC --> EXTRACT
+    EXTRACT --> LEDGER
+    EXTRACT --> HISTORY
+    LEDGER --> BOUNDARY & LORE_GUARD & CLUE_GUARD
+```
+
+### 4. 吃书冲突排查与双向仲裁决策机制
+
+```mermaid
+flowchart TD
+    CONFLICT["质检节点报警 / 门禁未通过 / 发现设定冲突"] --> JUDGE{"智能体 / 创作者仲裁冲突属性"}
+    
+    JUDGE -- "分支 A：正文笔误 / 偶发 OOC / 违规禁词" --> ACTION_A["正文微调方案 (Draft Patch)\n1. 定位章节工作区草稿具体段落\n2. 精准修补正文行文偏差\n3. 重新执行质检节点验证"]
+    
+    JUDGE -- "分支 B：剧情合理演进 / 新势力突破 / 设定升阶" --> ACTION_B["设定演进回写 (Lore Evolution)\n1. 更新 设定/世界观/ 或 设定/人物/ 档案\n2. 记录突破契机并同步更新事实账本\n3. 刷新全书设定基线，保持后续一致"]
+    
+    ACTION_A --> RE_EVAL["触发增量状态机推导 (pipeline.py derive_status)"]
+    ACTION_B --> RE_EVAL
+    RE_EVAL --> DONE["断言达标，节点恢复 🟢 current，流水线解除阻塞"]
+```
