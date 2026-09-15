@@ -128,6 +128,20 @@
           <!-- Agent 节点特有字段 -->
           <div id="sectionAgentFields" class="field-section">
             <div class="form-group">
+              <label for="selectNodeModel">执行模型 (Model Engine):</label>
+              <div class="model-select-wrapper">
+                <select id="selectNodeModel" class="studio-input model-select">
+                  <option value="gemini-3.8-flash-high">⚡ Gemini 3.8 Flash (High) - 正文起草/状态盘点/深度润色</option>
+                  <option value="gemini-3.8-flash-medium">⚡ Gemini 3.8 Flash (Medium) - 均衡思考/日常生成</option>
+                  <option value="gemini-3.8-flash-low">⚡ Gemini 3.8 Flash (Low) - 快速格式化/轻量摘要</option>
+                  <option value="claude-opus-4.6-thinking">🧠 Claude Opus 4.6 (Thinking) - 深度逻辑审查/防吃书</option>
+                  <option value="claude-3.7-sonnet-thinking">🧠 Claude 3.7 Sonnet (Thinking) - 宏观大纲推演</option>
+                  <option value="custom">⚙️ 自定义输入模型ID...</option>
+                </select>
+                <input type="text" id="fieldModel" class="studio-input hidden" style="margin-top:6px;" placeholder="输入自定义模型ID，例如: gemini-3.8-flash-high" />
+              </div>
+            </div>
+            <div class="form-group">
               <label for="fieldRole">担当角色 (Role):</label>
               <input type="text" id="fieldRole" class="studio-input" placeholder="例如: 长篇连载作家 / 去AI味审校" />
             </div>
@@ -136,8 +150,24 @@
               <textarea id="fieldPrompt" class="studio-textarea" rows="6" placeholder="编写该节点的大模型执行指令..."></textarea>
             </div>
             <div class="form-group">
-              <label for="fieldSkills">绑定技能 (Skills, 逗号分隔):</label>
-              <input type="text" id="fieldSkills" class="studio-input" placeholder="例如: novel-suspense-hook, scene-pacing" />
+              <div class="skill-label-row">
+                <label>绑定专业技能 (Skills):</label>
+                <span class="skill-count-badge" id="skillCountBadge">0 个</span>
+              </div>
+              <div id="nodeSkillsTags" class="skills-tags-container"></div>
+
+              <div class="skill-add-bar">
+                <select id="selectAvailableSkill" class="studio-input skill-select">
+                  <option value="">-- 选择系统技能库预设 --</option>
+                </select>
+                <button type="button" id="btnAddSystemSkill" class="btn btn-secondary btn-sm">＋ 添加预设</button>
+              </div>
+
+              <div class="skill-custom-bar">
+                <input type="text" id="inputCustomSkill" class="studio-input skill-custom-input" placeholder="或输入自定义技能名称..." />
+                <button type="button" id="btnAddCustomSkill" class="btn btn-secondary btn-sm">＋ 自定义</button>
+              </div>
+              <input type="hidden" id="fieldSkills" />
             </div>
           </div>
 

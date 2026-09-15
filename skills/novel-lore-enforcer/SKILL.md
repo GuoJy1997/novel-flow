@@ -2,6 +2,7 @@
 name: novel-lore-enforcer
 description: >
   世界观底层法则与物理边界执法官。负责对抗性负向规则核查，严防力量体系通胀、战力崩坏与硬性设定吃书，确保长篇连载的客观现实逻辑稳固。
+category: 章节审核
 ---
 
 # 世界观底层法则与防吃书指南 (Lore Enforcer)

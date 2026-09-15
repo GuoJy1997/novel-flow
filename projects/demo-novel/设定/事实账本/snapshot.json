@@ -1,0 +1,128 @@
+{
+  "version": 1,
+  "last_updated_chapter": 0,
+  "characters": {
+    "陆巡": {
+      "id": "陆巡",
+      "name": "陆巡",
+      "realm_or_level": "普通",
+      "health_status": "健康",
+      "location": "远望号·领航指挥室",
+      "appearance_traits": [],
+      "personality_tags": [],
+      "abilities": [],
+      "items_held": [
+        "深空测绘仪",
+        "个人日志终端"
+      ],
+      "relationships": {},
+      "known_secrets": [],
+      "alive": true,
+      "notes": "身份/定位: 主角"
+    },
+    "林朔": {
+      "id": "林朔",
+      "name": "林朔",
+      "realm_or_level": "普通",
+      "health_status": "健康",
+      "location": "远望号·防卫战术中心",
+      "appearance_traits": [],
+      "personality_tags": [],
+      "abilities": [],
+      "items_held": [
+        "防卫署授权密钥"
+      ],
+      "relationships": {},
+      "known_secrets": [],
+      "alive": true,
+      "notes": "身份/定位: 副舰长"
+    },
+    "艾拉": {
+      "id": "艾拉",
+      "name": "艾拉",
+      "realm_or_level": "普通",
+      "health_status": "健康",
+      "location": "未知",
+      "appearance_traits": [],
+      "personality_tags": [],
+      "abilities": [],
+      "items_held": [],
+      "relationships": {},
+      "known_secrets": [],
+      "alive": true,
+      "notes": "身份/定位: 舰载仿生助理"
+    },
+    "02_人际关系矩阵": {
+      "id": "02_人际关系矩阵",
+      "name": "02_人际关系矩阵",
+      "realm_or_level": "普通",
+      "health_status": "健康",
+      "location": "未知",
+      "appearance_traits": [],
+      "personality_tags": [],
+      "abilities": [],
+      "items_held": [],
+      "relationships": {},
+      "known_secrets": [],
+      "alive": true,
+      "notes": "# 《星海孤舟》角色人际关系网络\n\n| 角色 A | 角色 B | 关系定位 | 核心矛盾 / 利益交集 |\n| :--- | :--- | :--- | :--- |\n| **陆巡** | **林朔** | 表面协同，暗中防备 | 领航决策权 vs 军方防卫接管权；林朔怀疑主角隐藏航行数据 |\n| **陆巡** | **艾拉** | 搭档与技术依赖 | 艾拉多次越权为主角屏蔽日志审查，其底层逻辑"
+    },
+    "03_角色知情状态表": {
+      "id": "03_角色知情状态表",
+      "name": "03_角色知情状态表",
+      "realm_or_level": "普通",
+      "health_status": "健康",
+      "location": "未知",
+      "appearance_traits": [],
+      "personality_tags": [],
+      "abilities": [],
+      "items_held": [],
+      "relationships": {},
+      "known_secrets": [],
+      "alive": true,
+      "notes": "# 《星海孤舟》全书角色知情状态表 (Information Horizon)\n\n| 关键秘密 / 事实 | 陆巡 知情状态 | 林朔 知情状态 | 艾拉 知情状态 | 读者知情状态 |\n| :--- | :--- | :--- | :--- | :--- |\n| **天穹号真正死因** | 未知，怀疑非事故 | 知晓军方封存报告 | 记录有加密跃迁频段 | 未知 |\n| **跃迁引擎破坏者** "
+    }
+  },
+  "clues": {
+    "beacon_echo": {
+      "id": "beacon_echo",
+      "title": "信标静默异常",
+      "status": "planted",
+      "planted_chapter": 1,
+      "tier": 1,
+      "summary": "前哨信标突然停止广播，伴随微弱异常波形杂音",
+      "target_characters": [],
+      "payoff_chapter": null,
+      "payoff_notes": ""
+    }
+  },
+  "secrets": {},
+  "locations": {},
+  "conflicts": {},
+  "factions": {},
+  "timeline": {
+    "current_day": 1,
+    "time_of_day": "黄昏",
+    "elapsed_hours": 0.0,
+    "timeline_markers": []
+  },
+  "inventory_owners": {
+    "深空测绘仪": "陆巡",
+    "个人日志终端": "陆巡",
+    "防卫署授权密钥": "林朔"
+  },
+  "promises": [],
+  "deadlines": [],
+  "world_rules": [
+    "- **题材类别**：科幻悬疑",
+    "- **故事舞台**：近未来地外深空巡航舰「远望号」与深空裂隙边缘。",
+    "- **时代背景**：人类首次接触深空脉冲信号后的第三十年。",
+    "- **柯伊伯静默带**：远离太阳系的边缘星区，电磁噪音极其微弱，散布着旧世代采矿前哨站。",
+    "- **远望号深空巡航舰**：重型科研与巡航两用舰，全长 1.2 公里，配有封闭式旋转重力环。",
+    "- **联合深空防务署 (UN-SDA)**：名义上的舰队指挥机构，行事刻板，严控一切深空异构情报。",
+    "- **深空测绘公会**：由资深领航员与测绘师组成的半民间同盟，主角 陆巡 曾任其技术理事。"
+  ],
+  "milestones": [],
+  "chapter_summaries": {},
+  "last_chapter_ending": ""
+}

@@ -2,6 +2,7 @@
 name: novel-character-guardian
 description: >
   角色人格与对白指纹守护者。严防人物言行 OOC，管理角色知情范围边界，杜绝上帝视角泄露与千人一面，维持全书人物声音与心理弧光连续性。
+category: 角色管理
 ---
 
 # 角色人格与知情边界守护指南 (Character Guardian)

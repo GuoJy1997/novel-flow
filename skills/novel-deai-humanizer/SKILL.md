@@ -2,6 +2,7 @@
 name: novel-deai-humanizer
 description: >
   中文小说极致去 AI 味与文风校准专家。基于感官白描重写、短句推进节奏与作者文风样本校准，彻底消除假大空抒情、机械并列与说明文腔调。
+category: 去除AI味
 ---
 
 # 中文小说去 AI 味与文风校准指南 (Novel De-AI Humanizer)

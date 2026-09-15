@@ -17,3 +17,7 @@ Thumbs.db
 .vscode/
 .idea/
 *.swp
+
+# 本地/运行时配置
+shared/custom_projects.json
+custom_projects.json

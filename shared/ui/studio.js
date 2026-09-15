@@ -75,9 +75,17 @@
   const sectionCommandFields = document.getElementById('sectionCommandFields');
   const sectionHumanFields = document.getElementById('sectionHumanFields');
 
+  const selectNodeModel = document.getElementById('selectNodeModel');
+  const fieldModel = document.getElementById('fieldModel');
   const fieldRole = document.getElementById('fieldRole');
   const fieldPrompt = document.getElementById('fieldPrompt');
   const fieldSkills = document.getElementById('fieldSkills');
+  const nodeSkillsTags = document.getElementById('nodeSkillsTags');
+  const skillCountBadge = document.getElementById('skillCountBadge');
+  const selectAvailableSkill = document.getElementById('selectAvailableSkill');
+  const btnAddSystemSkill = document.getElementById('btnAddSystemSkill');
+  const inputCustomSkill = document.getElementById('inputCustomSkill');
+  const btnAddCustomSkill = document.getElementById('btnAddCustomSkill');
   const fieldRun = document.getElementById('fieldRun');
   const fieldAsk = document.getElementById('fieldAsk');
   const fieldInputs = document.getElementById('fieldInputs');
@@ -123,13 +131,132 @@
   const btnSaveReaderContent = document.getElementById('btnSaveReaderContent');
 
   let currentReadingFile = '';
+  let availableSkills = [];
+
+  function formatModelShort(model) {
+    if (!model) return '⚡ Gemini 3.8 Flash (High)';
+    const m = model.toLowerCase();
+    if (m.includes('opus')) return '🧠 Claude Opus 4.6 (Thinking)';
+    if (m.includes('sonnet')) return '🧠 Claude 3.7 Sonnet (Thinking)';
+    if (m === 'gemini-3.8-flash-high') return '⚡ Gemini 3.8 Flash (High)';
+    if (m === 'gemini-3.8-flash-medium') return '⚡ Gemini 3.8 Flash (Medium)';
+    if (m === 'gemini-3.8-flash-low') return '⚡ Gemini 3.8 Flash (Low)';
+    if (m.includes('flash')) return '⚡ Gemini 3.8 Flash';
+    return `🤖 ${model.length > 25 ? model.substring(0, 23) + '..' : model}`;
+  }
+
+  function getModelClass(model) {
+    if (!model) return 'model-default';
+    const m = model.toLowerCase();
+    if (m.includes('opus') || m.includes('claude')) return 'model-claude';
+    if (m.includes('gemini') || m.includes('flash')) return 'model-gemini';
+    return 'model-custom';
+  }
 
   // ==========================================
   // 1. 初始化与项目加载
   // ==========================================
   async function init() {
     setupEventListeners();
+    await fetchAvailableSkills();
     await loadProjects();
+  }
+
+  async function fetchAvailableSkills() {
+    try {
+      const res = await fetch('/api/skills');
+      const data = await res.json();
+      availableSkills = data.skills || [];
+      populateAvailableSkillsDropdown();
+    } catch (e) {
+      console.error('Failed to load skills:', e);
+    }
+  }
+
+  function populateAvailableSkillsDropdown() {
+    if (!selectAvailableSkill) return;
+    selectAvailableSkill.innerHTML = '<option value="">-- 选择系统技能库预设 --</option>';
+
+    const categories = {};
+    availableSkills.forEach(s => {
+      const cat = s.category || '通用技能';
+      if (!categories[cat]) categories[cat] = [];
+      categories[cat].push(s);
+    });
+
+    Object.keys(categories).forEach(cat => {
+      const group = document.createElement('optgroup');
+      group.label = `【${cat}】`;
+      categories[cat].forEach(s => {
+        const opt = document.createElement('option');
+        opt.value = s.id;
+        opt.textContent = `${s.id} - ${s.name}`;
+        opt.title = s.description;
+        group.appendChild(opt);
+      });
+      selectAvailableSkill.appendChild(group);
+    });
+  }
+
+  function renderNodeSkills(skills) {
+    if (!nodeSkillsTags) return;
+    nodeSkillsTags.innerHTML = '';
+    const skillList = Array.isArray(skills) ? skills : [];
+
+    if (skillCountBadge) {
+      skillCountBadge.textContent = `${skillList.length} 个`;
+    }
+
+    if (skillList.length === 0) {
+      nodeSkillsTags.innerHTML = '<span class="skills-empty-hint">暂未绑定任何专业技能</span>';
+      return;
+    }
+
+    skillList.forEach(sid => {
+      const badge = document.createElement('span');
+      badge.className = 'skill-tag-badge';
+      const meta = availableSkills.find(s => s.id === sid);
+      const desc = meta ? meta.description : '自定义小说技能';
+      const cat = meta ? meta.category : '';
+      badge.title = desc;
+
+      badge.innerHTML = `
+        <span class="skill-tag-name">${escapeHtml(sid)}</span>
+        ${cat ? `<span class="skill-tag-cat">${escapeHtml(cat)}</span>` : ''}
+        <span class="skill-tag-del" title="移除该技能">&times;</span>
+      `;
+
+      badge.querySelector('.skill-tag-del').addEventListener('click', (e) => {
+        e.stopPropagation();
+        removeSkillFromCurrentNode(sid);
+      });
+
+      nodeSkillsTags.appendChild(badge);
+    });
+  }
+
+  function addSkillToCurrentNode(skillId) {
+    if (!selectedNodeId || !currentGraph || !currentGraph.nodes || !currentGraph.nodes[selectedNodeId]) return;
+    const node = currentGraph.nodes[selectedNodeId];
+    if (!node.skills) node.skills = [];
+    if (!node.skills.includes(skillId)) {
+      node.skills.push(skillId);
+      if (fieldSkills) fieldSkills.value = node.skills.join(', ');
+      renderNodeSkills(node.skills);
+      saveGraphToServer();
+      appendLog(`[studio] 🎯 节点 [${selectedNodeId}] 绑定技能: ${skillId}`);
+    }
+  }
+
+  function removeSkillFromCurrentNode(skillId) {
+    if (!selectedNodeId || !currentGraph || !currentGraph.nodes || !currentGraph.nodes[selectedNodeId]) return;
+    const node = currentGraph.nodes[selectedNodeId];
+    if (!node.skills) return;
+    node.skills = node.skills.filter(s => s !== skillId);
+    if (fieldSkills) fieldSkills.value = node.skills.join(', ');
+    renderNodeSkills(node.skills);
+    saveGraphToServer();
+    appendLog(`[studio] 🗑️ 节点 [${selectedNodeId}] 移除技能: ${skillId}`);
   }
 
   async function loadProjects() {
@@ -267,6 +394,9 @@
 
       const roleText = node.role || (node.kind === 'command' ? '命令行工具' : '人工检查点');
       const promptBrief = node.prompt || node.ask || (node.run ? node.run.join(' ') : '无指令说明');
+      const modelBadgeHtml = (node.kind === 'agent' && node.model)
+        ? `<div class="node-model-row"><span class="node-model-chip ${getModelClass(node.model)}" title="执行模型: ${escapeHtml(node.model)}">${formatModelShort(node.model)}</span></div>`
+        : '';
 
       card.innerHTML = `
         <div class="node-header">
@@ -278,6 +408,7 @@
         </div>
         <div class="node-body">
           <div class="node-role">${escapeHtml(roleText)}</div>
+          ${modelBadgeHtml}
           <div class="node-brief">${escapeHtml(promptBrief)}</div>
         </div>
         <div class="node-ports">
@@ -511,9 +642,33 @@
     sectionHumanFields.classList.toggle('hidden', node.kind !== 'human');
 
     if (node.kind === 'agent') {
+      const currentModel = node.model || 'gemini-3.8-flash-high';
+      const knownModels = [
+        'gemini-3.8-flash-high',
+        'gemini-3.8-flash-medium',
+        'gemini-3.8-flash-low',
+        'claude-opus-4.6-thinking',
+        'claude-3.7-sonnet-thinking'
+      ];
+      if (selectNodeModel) {
+        if (knownModels.includes(currentModel)) {
+          selectNodeModel.value = currentModel;
+          if (fieldModel) {
+            fieldModel.value = currentModel;
+            fieldModel.classList.add('hidden');
+          }
+        } else {
+          selectNodeModel.value = 'custom';
+          if (fieldModel) {
+            fieldModel.value = currentModel;
+            fieldModel.classList.remove('hidden');
+          }
+        }
+      }
       fieldRole.value = node.role || '';
       fieldPrompt.value = node.prompt || '';
       fieldSkills.value = (node.skills || []).join(', ');
+      renderNodeSkills(node.skills || []);
       btnDispatchHost.textContent = '🚀 在 Antigravity 中执行';
     } else if (node.kind === 'command') {
       fieldRun.value = (node.run || []).join(' ');
@@ -574,6 +729,11 @@
       node.role = fieldRole.value.trim();
       node.prompt = fieldPrompt.value;
       node.skills = fieldSkills.value.split(',').map(s => s.trim()).filter(Boolean);
+      if (selectNodeModel) {
+        node.model = (selectNodeModel.value === 'custom' && fieldModel)
+          ? fieldModel.value.trim()
+          : selectNodeModel.value;
+      }
     } else if (node.kind === 'command') {
       node.run = fieldRun.value.split(' ').map(s => s.trim()).filter(Boolean);
     } else if (node.kind === 'human') {
@@ -707,10 +867,16 @@
   function copyAgentRunPrompt() {
     if (!selectedNodeId || !currentGraph.nodes[selectedNodeId]) return;
     const node = currentGraph.nodes[selectedNodeId];
+    const skillList = node.skills || [];
+    const skillDescriptions = skillList.map(sid => {
+      const meta = availableSkills.find(s => s.id === sid);
+      return meta ? `  * ${sid}【${meta.category}】：${meta.description}` : `  * ${sid}`;
+    });
+
     const lines = [
       `【小说工作流任务派发】请执行项目 [${currentProject}] 的节点 [${selectedNodeId}]：`,
       `- 担当角色：${node.role || '小说主创作家'}`,
-      `- 关联技能：${(node.skills || []).join(', ') || '通用创作'}`,
+      `- 关联专业技能指导：\n${skillDescriptions.length > 0 ? skillDescriptions.join('\n') : '  * 无'}`,
       `- 输入文件契约：${(node.inputs || []).join(', ') || '无'}`,
       `- 产出文件契约：${(node.outputs || []).join(', ') || '无'}`,
     ];
@@ -885,10 +1051,61 @@
     });
     btnSaveNode.addEventListener('click', saveCurrentNodeFromInspector);
     btnDeleteNode.addEventListener('click', deleteSelectedNode);
+
+    if (selectNodeModel) {
+      selectNodeModel.addEventListener('change', () => {
+        if (selectNodeModel.value === 'custom') {
+          if (fieldModel) {
+            fieldModel.classList.remove('hidden');
+            fieldModel.focus();
+          }
+        } else {
+          if (fieldModel) {
+            fieldModel.classList.add('hidden');
+            fieldModel.value = selectNodeModel.value;
+          }
+        }
+        saveCurrentNodeFromInspector();
+      });
+    }
+
+    if (fieldModel) {
+      fieldModel.addEventListener('input', () => {
+        saveCurrentNodeFromInspector();
+      });
+    }
     btnDispatchHost.addEventListener('click', () => {
       if (selectedNodeId) runNode(selectedNodeId, 'run_node');
     });
     btnCopyPrompt.addEventListener('click', copyAgentRunPrompt);
+
+    // 技能管理器事件
+    if (btnAddSystemSkill) {
+      btnAddSystemSkill.addEventListener('click', () => {
+        const val = selectAvailableSkill.value;
+        if (val) {
+          addSkillToCurrentNode(val);
+          selectAvailableSkill.value = '';
+        }
+      });
+    }
+    if (btnAddCustomSkill) {
+      btnAddCustomSkill.addEventListener('click', () => {
+        const val = inputCustomSkill.value.trim();
+        if (val) {
+          addSkillToCurrentNode(val);
+          inputCustomSkill.value = '';
+        }
+      });
+    }
+    if (inputCustomSkill) {
+      inputCustomSkill.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          btnAddCustomSkill.click();
+        }
+      });
+    }
 
     // 缩放与平移
     btnZoomIn.addEventListener('click', () => { zoom = Math.min(2.0, zoom + 0.15); applyCanvasTransform(); });

@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updatedAt": "2026-09-12T08:17:05Z",
+  "updatedAt": "2026-09-14T19:10:40Z",
   "params": {
     "chapter_num": 1,
     "chapter_pad": "01",
@@ -18,6 +18,7 @@
       "role": "小说前置状态与伏笔总账员",
       "status": "current",
       "inputs": {
+        "设定/事实账本/snapshot.json": "sha256:f1c30a48bf7db7048187d286abb16cd0889f1a5e88a9143b2e85cf27a337f005",
         "设定/世界观/": "sha256:77e23b793c6f62ebf4af8ec00b9aa5c109bb9dd61d8f478c633a069ab75244f9",
         "设定/人物/": "sha256:2db8694ced4efe4a8ff7dd4402c74f1dbc3d983ad21515e780af71f71af0542f",
         "设定/大纲/": "sha256:2fb5fca154d3876c56eeb32ac0343e023797b38e31dff4236d4ca9eed517f97b"
@@ -47,7 +48,7 @@
       "status": "current",
       "inputs": {
         "工作区/第01章/02_正文初稿.md": "sha256:6990e6f3cb8ee00ab1fd9a9f1ddecc0d310cc4837aac0775374df4517f4fa6a0",
-        "资产/voice_sample.md": "sha256:2bab23fe072aefef1a8c732731896a2d8017ba7a51fc1777cf95e40e2fa48ca3"
+        "资产/voice_sample.md": "sha256:3d2efa010adbad63ca0a831b9cb3c32d278518701dd44d92d3eff10c36092934"
       },
       "outputs": [
         "工作区/第01章/03_去AI味润色稿.md"
@@ -71,7 +72,7 @@
     "author_accept": {
       "kind": "human",
       "role": null,
-      "status": "current",
+      "status": "pending-human",
       "inputs": {
         "工作区/第01章/03_去AI味润色稿.md": "sha256:7d5d68e4af4077ea4aade88c1d0672bc85995752e887ea3b3ab065c95dae20b2",
         "工作区/第01章/04_盲审质检报告.md": "sha256:2b7d3cdc56d4cfeae7940d517c3adeaa4f3d3e30af69329b483b505f970cd375"
@@ -79,21 +80,21 @@
       "outputs": [
         "正文/第一卷/第01章_沉默信标.md"
       ],
-      "staleBecause": null,
+      "staleBecause": "请创作者审阅润色稿与审查打分，确认无误后点击放行入库为正式章节。",
       "ask": "请创作者审阅润色稿与审查打分，确认无误后点击放行入库为正式章节。",
-      "ackAt": "2026-09-12T08:14:24Z"
+      "ackAt": null
     },
     "novel_stats": {
       "kind": "command",
       "role": null,
-      "status": "current",
+      "status": "blocked",
       "inputs": {
         "正文/第一卷/第01章_沉默信标.md": "sha256:7d5d68e4af4077ea4aade88c1d0672bc85995752e887ea3b3ab065c95dae20b2"
       },
       "outputs": [
         "工作区/第01章/05_章节统计.json"
       ],
-      "staleBecause": null
+      "staleBecause": "上游节点 [author_accept] 处于 pending-human 状态"
     }
   }
 }

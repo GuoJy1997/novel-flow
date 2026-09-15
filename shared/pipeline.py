@@ -16,6 +16,7 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -137,10 +138,17 @@ def normalize_params(params: Dict[str, Any], override_params: Optional[Dict[str,
         try:
             c_num = int(merged["chapter_num"])
             merged["chapter_num"] = c_num
+            merged["chapter_pad3"] = f"{c_num:03d}"
             if override_params and "chapter_num" in override_params:
                 merged["chapter_pad"] = f"{c_num:02d}"
             elif "chapter_pad" not in merged:
                 merged["chapter_pad"] = f"{c_num:02d}"
+            
+            # 派生前序章节占位符（供前情探索节点引用）
+            prev_num = max(1, c_num - 1)
+            merged["chapter_prev_num"] = prev_num
+            merged["chapter_prev_pad"] = f"{prev_num:02d}"
+            merged["chapter_prev_pad3"] = f"{prev_num:03d}"
         except (ValueError, TypeError):
             pass
 
@@ -236,6 +244,9 @@ def load_graph(yaml_text: str, project_root: Optional[Path] = None,
         elif kind == "agent":
             if not node.get("role"):
                 node["role"] = f"智能体-{nid}"
+            model = node.get("model")
+            if model is not None and (not isinstance(model, str) or not model.strip()):
+                raise ValidationError(f"节点 [{nid}] 的 model 属性若声明，必须是非空字符串，当前为: {model!r}")
         elif kind == "human":
             if not node.get("ask"):
                 raise ValidationError(f"human 节点 [{nid}] 必须声明 ask (人工审查说明)")
@@ -274,10 +285,12 @@ def load_graph(yaml_text: str, project_root: Optional[Path] = None,
 def count_text_words(text: str) -> int:
     """计算中文小说的有效字数。
     
-    统计规则：中文字符数 + 英文连续单词数（跳过纯空白与 Markdown 标题标记）。
+    统计规则：中文字符数 + 英文连续单词数（跳过纯空白、YAML Frontmatter 与 Markdown 标题标记）。
     """
     if not text:
         return 0
+    # 剔除 YAML Frontmatter
+    text = re.sub(r"^---\s*\n.*?\n---\s*\n", "", text, flags=re.DOTALL)
     # 剔除 Markdown 标题符号
     clean_lines = [line.lstrip("# \t") for line in text.splitlines() if line.strip()]
     cleaned = "\n".join(clean_lines)
@@ -504,6 +517,8 @@ def derive_status(graph: Dict[str, Any], project_root: Path,
             "outputs": [_expand_params(o, params) for o in (node.get("outputs") or [])],
             "staleBecause": "；".join(because[nid]) if because[nid] else None,
         }
+        if node.get("model"):
+            entry["model"] = node.get("model")
         if node.get("inplace"):
             entry["inplace"] = [_expand_params(p, params) for p in node["inplace"]]
         if nid in failed_reasons:
@@ -526,6 +541,7 @@ def generate_run_prompt(node_id: str, node: Dict[str, Any], project_dir: str) ->
     params = node.get("_params") or {}
     role = node.get("role") or "小说创作专家"
     prompt_text = node.get("prompt") or ""
+    model = node.get("model")
     inputs = [_expand_params(p, params) for p in (node.get("inputs") or [])]
     outputs = [_expand_params(p, params) for p in (node.get("outputs") or [])]
     inplace = [_expand_params(p, params) for p in (node.get("inplace") or [])]
@@ -536,10 +552,14 @@ def generate_run_prompt(node_id: str, node: Dict[str, Any], project_dir: str) ->
         lines = [
             f"【小说工作流任务派发】执行项目 [{project_dir}] 的节点 [{node_id}]：",
             f"- 担当角色：{role}",
+        ]
+        if model:
+            lines.append(f"- 算力调度模型：【{model}】")
+        lines.extend([
             f"- 关联技能：{', '.join(skills) if skills else '无'}",
             f"- 输入文件契约 (只读以下文件)：{', '.join(inputs) if inputs else '无'}",
             f"- 产出目标契约 (请写入)：{', '.join(outputs + inplace)}",
-        ]
+        ])
         if asserts:
             assert_items = [f"{k}={v}" for k, v in asserts.items()]
             lines.append(f"- 质量硬断言要求：{', '.join(assert_items)}")
@@ -689,6 +709,17 @@ def cmd_run(node_id: str, project_dir: str, override_params: Optional[Dict[str, 
         return res.returncode
 
     if kind == "human":
+        # 如果声明了 outputs 且输入有源文件，在放行时自动帮创作者归档到 outputs[0]
+        outputs = [_expand_params(o, params) for o in (node.get("outputs") or [])]
+        inputs = [_expand_params(i, params) for i in (node.get("inputs") or [])]
+        if outputs and inputs:
+            src = project_root / inputs[0]
+            dst = project_root / outputs[0]
+            if src.is_file():
+                dst.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(src, dst)
+                print(f"[run] 自动归档入库: {inputs[0]} -> {outputs[0]}")
+
         state = load_state(project_root)
         nodes_state = state.setdefault("nodes", {})
         entry = nodes_state.setdefault(node_id, {})

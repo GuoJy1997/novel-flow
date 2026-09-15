@@ -38,6 +38,7 @@ sys.path.insert(0, str(SHARED_DIR))
 
 import pipeline
 import scaffold_novel
+import memory_engine
 
 app = FastAPI(title="Novel Pipeline Studio API", version="1.0.0")
 
@@ -86,6 +87,11 @@ def find_project_dir(project_slug: str) -> Path:
     cand2 = PROJECTS_DIR / project_slug
     if cand2.is_dir():
         return cand2.resolve()
+
+    for custom_path in load_custom_projects():
+        cp = Path(custom_path)
+        if cp.is_dir() and (cp.name == project_slug or str(cp.resolve()).replace("\\", "/").lower() == project_slug.replace("\\", "/").lower()):
+            return cp.resolve()
 
     raise HTTPException(status_code=404, detail=f"未找到小说项目目录: {project_slug}")
 
@@ -253,6 +259,87 @@ def list_chapters(project: str = Query(...)):
         "project": project,
         "chapters": sorted_chapters,
         "current": current_default,
+    }
+
+
+@app.get("/api/skills")
+def list_skills():
+    """扫描系统全局小说技能库，返回技能列表及元数据。"""
+    skills_dir = STUDIO_ROOT / "skills"
+    results = []
+    if not skills_dir.is_dir():
+        return {"skills": []}
+
+    for skill_path in sorted(skills_dir.iterdir(), key=lambda p: p.name):
+        if not skill_path.is_dir():
+            continue
+        skill_file = skill_path / "SKILL.md"
+        if not skill_file.is_file():
+            continue
+
+        item = {
+            "id": skill_path.name,
+            "name": skill_path.name,
+            "description": "",
+            "category": "通用技能",
+        }
+
+        try:
+            content = skill_file.read_text(encoding="utf-8", errors="replace")
+            if content.startswith("---"):
+                parts = content.split("---", 2)
+                if len(parts) >= 3:
+                    fm_text = parts[1]
+                    fm = yaml.safe_load(fm_text)
+                    if isinstance(fm, dict):
+                        item["name"] = fm.get("name") or skill_path.name
+                        item["description"] = (fm.get("description") or "").strip()
+                        item["category"] = fm.get("category") or "通用技能"
+        except Exception as e:
+            item["description"] = f"解析异常: {e}"
+
+        results.append(item)
+
+    return {"skills": results}
+
+
+@app.get("/api/memory")
+def get_project_memory(project: str = Query(...)):
+    """获取指定小说项目的 15 维实时事实快照。"""
+    pdir = find_project_dir(project)
+    engine = memory_engine.MemoryEngine(pdir)
+    snapshot = engine.load_snapshot()
+    return {
+        "project": project,
+        "snapshot": snapshot.to_dict(),
+        "ledgerFile": str(engine.ledger_file).replace("\\", "/"),
+    }
+
+
+class ApplyChangesRequest(BaseModel):
+    project: str
+    chapter_num: int
+    changes: Dict[str, Any]
+    chapter_summary: str = ""
+    ending_text: str = ""
+
+
+@app.post("/api/memory/apply")
+def apply_project_memory(req: ApplyChangesRequest):
+    """回写章节 CHANGES 变更声明至全局事实账本。"""
+    pdir = find_project_dir(req.project)
+    engine = memory_engine.MemoryEngine(pdir)
+    updated_snap, issues = engine.apply_changes(
+        changes=req.changes,
+        chapter_num=req.chapter_num,
+        chapter_summary=req.chapter_summary,
+        ending_text=req.ending_text,
+    )
+    return {
+        "status": "ok",
+        "chapter_num": req.chapter_num,
+        "issues": issues,
+        "snapshot": updated_snap.to_dict(),
     }
 
 

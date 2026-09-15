@@ -45,6 +45,11 @@ DEFAULT_GRAPH = {
             "outputs": [
                 "工作区/第{chapter_pad}章/01_状态上下文.md",
             ],
+            "skills": [
+                "novel-context-curator",
+                "novel-clue-foreshadowing",
+                "novel-character-guardian",
+            ],
             "assert": {
                 "min_words": 200,
             },
@@ -60,8 +65,10 @@ DEFAULT_GRAPH = {
                 "在正文末尾设立强烈的悬念钩子。"
             ),
             "skills": [
+                "novel-style-narrator",
                 "novel-scene-pacing",
-                "novel-suspense-hook",
+                "novel-opening-hook",
+                "novel-character-guardian",
             ],
             "inputs": [
                 "工作区/第{chapter_pad}章/01_状态上下文.md",
@@ -86,6 +93,11 @@ DEFAULT_GRAPH = {
                 "2. 增强环境感官细节、微表情与短促有力的动作描写；\n"
                 "3. 将改写后的高质量定稿直接写出到指定文件。"
             ),
+            "skills": [
+                "novel-deai-humanizer",
+                "novel-sensory-grounding",
+                "novel-anti-cliche",
+            ],
             "inputs": [
                 "工作区/第{chapter_pad}章/02_正文初稿.md",
                 "资产/voice_sample.md",
@@ -109,6 +121,11 @@ DEFAULT_GRAPH = {
                 "定位到具体句段给出修改建议，并在报告末尾严格输出一行格式：\n"
                 "SCORES: {\"overall\": 88, \"lore\": 92, \"ooc\": 90}"
             ),
+            "skills": [
+                "novel-lore-enforcer",
+                "novel-consistency-auditor",
+                "novel-pacing-evaluator",
+            ],
             "inputs": [
                 "工作区/第{chapter_pad}章/03_去AI味润色稿.md",
                 "设定/世界观/",
@@ -282,7 +299,19 @@ def scaffold_novel(project_dir: Path, title: str, genre: str, protagonist: str, 
 4. **拒绝 AI 套话**：严禁出现“宛如”、“仿佛在诉说着”、“在这一刻时间仿佛凝固”等套路模板句。
 """, encoding="utf-8")
 
+    # 7. 生成最高宪法 novel.md
+    from novel_clarify import NovelConstitution, compile_constitution_markdown
+    const_data = NovelConstitution(
+        slug=project_dir.name,
+        title=title,
+        genre=genre,
+        protagonist_name=protagonist,
+        logline=logline,
+    )
+    (project_dir / "novel.md").write_text(compile_constitution_markdown(const_data), encoding="utf-8")
+
     print(f"[scaffold] 课题项目已成功初始化 (标准工业化模块结构): {project_dir}")
+    print(f"  - 最高宪法: novel.md")
     print(f"  - 配置文件: graph.yaml")
     print(f"  - 设定模块: 设定/世界观/, 设定/人物/, 设定/大纲/")
     print(f"  - 资产目录: 资产/voice_sample.md")
@@ -292,13 +321,26 @@ def scaffold_novel(project_dir: Path, title: str, genre: str, protagonist: str, 
 
 def main():
     parser = argparse.ArgumentParser(description="小说工程脚手架生成器")
-    parser.add_argument("--slug", required=True, help="小说英文标识 (slug)")
+    parser.add_argument("--slug", help="小说英文标识 (slug)")
     parser.add_argument("--title", default="星海孤舟", help="小说中文标题")
     parser.add_argument("--genre", default="科幻悬疑", help="题材分类")
     parser.add_argument("--protagonist", default="陆巡", help="主角姓名")
     parser.add_argument("--logline", default="一艘偏离航线的深空探险船，在静默星域遭遇五年前失踪同僚留下的诡谲讯号。", help="一句话主旨")
     parser.add_argument("--parent", default="projects", help="父目录")
+    parser.add_argument("--clarify", action="store_true", help="进入对话式六阶递进需求澄清向导")
     args = parser.parse_args()
+
+    if args.clarify:
+        from novel_clarify import run_interactive_interview, fan_out_constitution
+        c = run_interactive_interview()
+        if args.slug:
+            c.slug = args.slug
+        target = Path(args.parent) / c.slug
+        fan_out_constitution(c, target)
+        return
+
+    if not args.slug:
+        parser.error("--slug 是必填项，或使用 --clarify 进入交互式向导")
 
     target = Path(args.parent) / args.slug
     scaffold_novel(target, args.title, args.genre, args.protagonist, args.logline)
@@ -306,3 +348,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+

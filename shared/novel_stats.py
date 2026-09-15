@@ -28,8 +28,8 @@ def analyze_chapter(chapter_path: Path, characters: List[str]) -> Dict[str, Any]
     text = chapter_path.read_text(encoding="utf-8", errors="replace")
     lines = [line.strip() for line in text.splitlines() if line.strip()]
 
-    # 提取所有引号内对话内容
-    dialogues = re.findall(r"“([^“”]+)”", text)
+    # 提取所有引号内对话内容 (同时兼容中文引号与英文双引号)
+    dialogues = re.findall(r"“([^“”]+)”", text) + re.findall(r'"([^"\n]+)"', text)
     dialogue_words = sum(count_words(d) for d in dialogues)
     total_words = count_words(text)
 
