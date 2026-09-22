@@ -35,21 +35,63 @@ DEFAULT_BANNED_WORDS = [
 
 DEFAULT_VOICE_SAMPLE = """# 工业化小说文风声纹与语言指纹样本 (Voice Calibration Master)
 
-## 一、 核心叙事指纹与抗朱雀检测军规
-1. **感官白描 (Show, Don't Tell)**：严禁用“令人感到无比恐惧”等抽象形容词，只写手电筒光柱里漂浮的石灰尘埃、青石板缝里的腥味、湿泥上碾出的印子。
-2. **短句破进 (拉大 Burstiness)**：拒绝 30 字以上复合长句，多用 3~7 字动词短句：“火灭了。”、“拔刀。”、“退三步。”
-3. **对话带刺**：人物之间不打无意义官腔，每一句对白都在进行信息差博弈与试探。
-4. **一票否决禁词表**：严禁出现“宛如”、“仿佛在诉说着”、“在这一刻”、“殊不知”、“不仅如此”。
+> **核心流派对标**：《十日终焉》（高智商推演/生死博弈/通俗白话） × 《诡舍》（生理恐惧惊悚/感官白描/情绪沉浸）
 
-## 二、 风格对照基准样章
-手电筒的白光扫在青砖墙上，光斑晃得人眼皮发酸。
-老齐在前面蹲下身子，胶底解放鞋在湿泥上碾出半圈暗红的印子。他没回头，只是竖起两根生着厚茧的食指，往虚空里轻轻一压。
-后头跟着的四个人连呼吸都掐灭了。
-空气里有一股烂木头泡在机油里的闷酸味，混着地下渗出的阴冷水汽，直往毛孔深处钻。头顶上的水滴声很匀，“嗒、嗒、嗒”，三秒一声，像在给什么东西计时。
-“规矩变了。”老齐压低嗓子，声音沙哑得像生铁磨砂纸，“刚才进门时，右边是三盏熄了的油灯，现在多了一盏。”
-哧啦。
-暗红的火苗跳起来，照亮了老齐脸上纵横交错的刀疤。火苗笔直向上，连半点晃动都没有。地底下一点风也没有。死寂。
-“不是生门封了。”老齐盯着手里快烧到指头的火柴棍，喉结上下滚了滚，“是这屋里……多了个喘大气的，把风给吸回去了。”
+## 一、 核心文风四大铁律 (Voice Commandments)
+
+1. **语言底色：现代通俗白话主导（90%~95%）**：
+   - 坚决杜绝大段“半文半白”或者假大空的书面之乎者也，行文必须通透、利落、现代、富有阅读冲击力。
+   - **半文半白/古意字词仅占 5%~10%**：仅在触及特定古籍残卷、青铜古铭、神秘符文或具有特定身份的历史人物（如魏晋名士）偶发沉吟时，作为气氛调味的“点睛硬骨”，绝不作为全篇主干叙述！
+
+2. **心理推演与生理情绪并重（严禁情感空心化）**：
+   - **生理恐惧与应激白描（对标《诡舍》）**：严禁直接贴“他感到极度害怕”等无力标签。必须刻画生理反应——喉咙发紧像吞了砂纸、后颈寒毛倒竖、掌心冷汗浸透刀柄、耳膜里全是自己擂鼓般的心跳声、吸入肺部的空气像带冰碴的刀子。
+   - **高智商齿轮咬合与博弈推演（对标《十日终焉》）**：主角的大脑是超频运转的生存逻辑推演器。在极端恐惧下，肾上腺素逼迫神经疯狂运算：怀疑对手动机、拆解规则漏洞、捕捉微表情（瞳孔收缩、指尖颤动、呼吸频率）、预设多重推演分支。
+   - **情绪执念与生死悲悯**：面对绝境、淘汰与同伴倒下，必须有真实的人性震颤、痛楚、不甘与狠厉，绝不可将人物写成冰冷没有情绪的剧情触发器。
+
+3. **对话带刺与微表情博弈**：
+   - 每一句台词都在争夺生机或隐蔽试探，充满潜台词。
+   - 杜绝说明文式对白，穿插市井紧绷感与黑色幽默（“合着咱们九死一生进来，是给人当开门钥匙的？”）。
+   - **【质检死线】**：严禁连续 200 字无对白引号！
+
+4. **短句破进与感官白描**：
+   - 拆解 25 字以上复合长从句，多用 3~8 字高频动词短句连续破进。
+   - 拒绝形容词堆砌，只写物理硬细节：剥落的生锈铁皮、指甲抠进石缝溢出的血沫、湿烂发霉的气味。
+
+---
+
+## 二、 风格对照黄金基准片段 (十日终焉 × 诡舍 生死推演示范)
+
+手电筒光束落在那扇锈死的大铁门上。
+光斑在发抖。
+不是光在抖，是陆巡握着手电筒的右手小臂在痉挛。
+生理本能无法骗人。他的心脏在胸腔里剧烈撞击，像一头困在铁笼里快要撞碎肋骨的兽。冷汗顺着下巴尖滑下来，砸在冰凉的手背上，激起一阵刺骨的麻痒。
+身后的通道一片死寂。
+刚才那种湿漉漉的拖行声停了。停在距离他们不到十米处的拐角暗处。
+“跑……跑啊！”周胖子两排牙齿在疯狂打架，声音抖得像筛糠，伸手就去拽门栓。
+“别碰！”
+陆巡一把扣住周胖子的手腕。手指捏得发白，指甲深深陷进皮肉里。
+周胖子痛得倒抽气：“门没锁！拉开就能出去！你想死别拉上我！”
+“你低头看门把手。”陆巡声音压到极低，喉咙干涩得像是被砂纸狠狠刮过。
+门把手是生铁铸的，上面结着一层暗红色的锈壳。但把手下方，垂着三根细如蛛丝的红线，红线另一端，连着门框里侧一枚微弱泛光的古旧铜铃。
+铜铃上刻着四个隐约可见的小篆：【开门见煞】。
+半文半白的古篆泛着妖异的暗青，但在陆巡眼里，这是最致命的规则陷阱。
+“如果门真的能走，上一批进来的人为什么全死在门后五米的地方？”
+陆巡死死盯着那枚铜铃，大脑像超频运转的齿轮，疯狂咬合推演：
+——如果拉门，铜铃必响。
+——规则第三条说：‘声起，生绝’。
+——但如果门不是生路，为什么背后的怪物偏偏把他们往这扇门前驱赶？
+冷汗渗进眼眶，带来火辣辣的刺痛。陆巡连眨都不眨一下。
+“怪物不是在猎杀我们。”陆巡喉结滚动了一下，瞳孔收缩如针尖，“它是在用恐怖逼我们替它拉开这扇门。”
+它进不去这扇门。
+它需要活人的手，去扯断那三根红线。
+“那……那怎么办？”周胖子的哭腔已经带了绝望，双腿一软，几乎跪在地上。
+身后的黑暗里，黏腻的脚步声再次响了起来。
+一步。
+两步。
+距离拐角，只剩五米。
+空气里弥漫着一股浓重得令人作呕的福尔马林与烂泥腥气。
+陆巡反手从靴底拔出短刀，冰冷的刀刃贴在手心，剧痛让他的神经瞬间清醒到极致。
+“退后。”陆巡盯着拐角处渐渐拉长的黑色扭曲阴影，声音很轻，却透着一股被逼入绝境后的疯狂冷冽，“它想让我们开门，说明它怕这门后的东西。那就——让它自己来开。”
 """
 
 
@@ -126,9 +168,13 @@ class NovelConstitution:
         },
     ])
 
-    # 阶梯五：叙事声纹与语言指纹
+    # 阶梯五：叙事声纹与语言风格定制 (Narrative Voice & Style)
     pov: str = "受限第三人称 (Close Third Person)"
-    tone: str = "民间悬疑质感与高智商生死博弈结合，冷硬肃杀，节奏凌厉"
+    tone: str = "《十日终焉》×《诡舍》高智商生死博弈与心理惊悚，以现代通俗白话为主，情绪与心理高压紧绷"
+    style_archetype: str = "十日终焉×诡舍 (现代通俗白话/生死博弈/深度心理悬疑)"
+    classical_ratio: str = "纯现代通俗白话占比 90%~95%，半文半白/古意字词仅占 5%~10% 适度穿插"
+    psychological_depth: str = "高密度心理推演与生理应激白描（心率、冷汗、微表情、多步推演反制），严禁削弱情绪"
+    dialogue_style: str = "高密度对白博弈、带刺试探、微表情信息差交锋，严禁连续 200 字无对白"
     banned_words: List[str] = field(default_factory=lambda: list(DEFAULT_BANNED_WORDS))
     voice_sample_text: str = DEFAULT_VOICE_SAMPLE
 
@@ -248,8 +294,12 @@ def compile_constitution_markdown(data: NovelConstitution) -> str:
 
 1. **叙事视角**：{data.pov}，摄像机牢牢焊死在主角视网膜上，严禁全知上帝视角！
 2. **文风基调**：{data.tone}。
-3. **句式节奏**：强制长短句交替，禁止连用三句 25 字以上复合长句，必须穿插 3~7 字极短动词单句。
-4. **一票否决禁词表**：
+3. **文风流派对标**：{data.style_archetype}。
+4. **语体与文言配比**：{data.classical_ratio}。坚决杜绝大段半文半白堆砌，保持现代白话的阅读通透感与极速叙事节奏。
+5. **心理与情绪流铁律**：{data.psychological_depth}。每一场危机必须有真实的恐惧生理应激（瞳孔收缩、心脏狂跳、冷汗渗出）与主角高速运转的推演逻辑，角色绝不可写成麻木工具人！
+6. **对话张力与密度**：{data.dialogue_style}。正文严禁出现连续 200 字无对白引号！
+7. **句式节奏**：强制长短句交替，禁止连用三句 25 字以上复合长句，必须穿插 3~7 字极短动词单句。
+8. **一票否决禁词表**：
    > {banned_md}
 
 ---
@@ -401,6 +451,12 @@ def fan_out_constitution(data: NovelConstitution, project_root: Path) -> Dict[st
         "version": 1,
         "novel_slug": data.slug,
         "last_updated_chapter": 0,
+        "style_constitution": {
+            "style_archetype": data.style_archetype,
+            "classical_ratio": data.classical_ratio,
+            "psychological_depth": data.psychological_depth,
+            "dialogue_style": data.dialogue_style,
+        },
         "protagonist": {
             "name": data.protagonist_name,
             "status": "健康，警戒",
@@ -446,6 +502,9 @@ def fan_out_constitution(data: NovelConstitution, project_root: Path) -> Dict[st
             "volume_name": vol_clean,
             "genre": data.genre,
             "tone": data.tone,
+            "style_archetype": data.style_archetype,
+            "classical_ratio": data.classical_ratio,
+            "psychological_depth": data.psychological_depth,
             "target_words": data.target_words_per_chapter,
         },
         "nodes": {
@@ -486,6 +545,7 @@ def fan_out_constitution(data: NovelConstitution, project_root: Path) -> Dict[st
                 "prompt": (
                     "你是一位顶级职业小说家。请严格结合工作区/第{chapter_pad}章/01_状态上下文.md 的任务要点\n"
                     "与设定/大纲/中关于第 {chapter_num} 章剧情设定，撰写本章完整正文。\n"
+                    "严格遵守 资产/voice_sample.md 中的语言指纹：以现代通俗白话为主（90%以上），严格限制半文半白在5%~10%以内；必须强化角色的心理推演、生理恐惧应激（心跳、冷汗、窒息感）与生死情绪张力；对话带刺博弈，严禁连续200字无对白。\n"
                     "人物言行与性格必须严密符合设定/人物/中的档案，严禁突兀 OOC 与上帝视角泄密。\n"
                     "在正文末尾设立强烈的悬念钩子。"
                 ),
@@ -516,9 +576,11 @@ def fan_out_constitution(data: NovelConstitution, project_root: Path) -> Dict[st
                 "role": "去 AI 味与文风校准专家",
                 "prompt": (
                     "对照 资产/voice_sample.md 中的作者语言风格样本，对 工作区/第{chapter_pad}章/02_正文初稿.md 进行深度去 AI 味润色：\n"
-                    "1. 剔除无意义的排比句、机械递进句、假大空抒情与说明文腔调；\n"
-                    "2. 增强环境感官细节、微表情与短促有力的动作描写；\n"
-                    "3. 将改写后的高质量定稿直接写出到指定文件。"
+                    "1. 坚决粉碎大段半文半白说教，回归现代通俗白话主导（90%+），半文半白仅限5%~10%点缀；\n"
+                    "2. 深度强化生理恐惧应激（心跳狂跳、冷汗、手抖、窒息感）与高智商心理推演齿轮；\n"
+                    "3. 剔除套路AI词、无意义排比、机械递进句与说明文腔调；\n"
+                    "4. 保证正文长短句交替，严禁连续 200 字无对白；\n"
+                    "5. 将改写后的高质量定稿直接写出到指定文件。"
                 ),
                 "skills": [
                     "story-deslop",
@@ -546,6 +608,7 @@ def fan_out_constitution(data: NovelConstitution, project_root: Path) -> Dict[st
                     "对 工作区/第{chapter_pad}章/03_去AI味润色稿.md 进行逐段盲审质检：\n"
                     "- 角色言行是否符合 设定/人物/（严查 OOC 与知情边界越界）；\n"
                     "- 力量体系与物理常识是否符合 设定/世界观/（严查吃书）；\n"
+                    "- 语言风格是否符合 资产/voice_sample.md（严查半文半白堆砌与心理情感空心化，通俗白话须占90%+）；\n"
                     "- 检查是否存在提前剧透未到期伏笔（对照 设定/大纲/03_伏笔与线索总台账.md）；\n"
                     "- 情节节奏、爽点与章末追读力评估。\n"
                     "定位到具体句段给出修改建议，并在报告末尾严格输出一行格式：\n"
@@ -657,9 +720,43 @@ def run_interactive_interview() -> NovelConstitution:
     c.vol1_title = input(f"4.1 第一卷卷名 [默认: {c.vol1_title}]: ").strip() or c.vol1_title
     c.vol1_goal = input(f"4.2 第一卷核心破局目标 [默认: {c.vol1_goal}]: ").strip() or c.vol1_goal
 
-    # 阶梯五 & 六
-    print("\n[阶梯五 & 六：声纹基调与质检门禁]")
-    c.tone = input(f"5.1 文风基调与氛围 [默认: {c.tone}]: ").strip() or c.tone
+    # 阶梯五：文风声纹与语言风格定制 (Narrative Voice & Style)
+    print("\n[阶梯五：文风声纹与语言风格定制 (Narrative Voice & Style)]")
+    print("请指定小说的核心文风/语言风格：")
+    print("  [1] 《十日终焉》×《诡舍》原型 (推荐：现代通俗白话90%+、高智商推演、生理恐惧与紧绷心理流、适度穿插5%古雅点缀)")
+    print("  [2] 硬核悬疑探险原型 (对标《鬼吹灯》：江湖黑话、民俗考据、粗粝写实动作)")
+    print("  [3] 纯现代都市暗面冷硬风 (对标经典美式硬汉侦探/新怪谈)")
+    print("  [4] 自定义文风")
+    style_choice = input("请选择预设序号 [默认: 1]: ").strip() or "1"
+    if style_choice == "1":
+        c.style_archetype = "十日终焉×诡舍 (现代通俗白话/生死博弈/深度心理悬疑)"
+        c.tone = "现代通俗白话生死博弈，强心理推理与生理恐惧紧绷，半文半白仅适量穿插"
+        c.classical_ratio = "纯现代通俗白话占比 90%~95%，半文半白/古雅字词仅占 5%~10% 作为气氛点缀"
+        c.psychological_depth = "极高深度心理推演与生理恐惧应激（心率、冷汗、微表情测算、多重假设推演），绝不削弱情绪"
+    elif style_choice == "2":
+        c.style_archetype = "鬼吹灯原型 (江湖黑话/民俗考据/硬核探险)"
+        c.tone = "粗粝写实、民俗考据扎实、快节奏动作与市井对白"
+        c.classical_ratio = "现代白话85%，民俗黑话与古籍考据占15%"
+    elif style_choice == "3":
+        c.style_archetype = "都市冷硬悬疑 (冷峻克制/快节奏追索)"
+        c.tone = "冷硬短促、心理压迫感强、注重细节物证"
+        c.classical_ratio = "纯现代白话 100%"
+    else:
+        c.style_archetype = input(f"请输入自定义文风原型 [默认: {c.style_archetype}]: ").strip() or c.style_archetype
+        c.classical_ratio = input(f"请输入文白配比要求 [默认: {c.classical_ratio}]: ").strip() or c.classical_ratio
+
+    tone_in = input(f"5.1 文风基调与情绪氛围 [默认: {c.tone}]: ").strip()
+    if tone_in:
+        c.tone = tone_in
+    ratio_in = input(f"5.2 文白配比说明 [默认: {c.classical_ratio}]: ").strip()
+    if ratio_in:
+        c.classical_ratio = ratio_in
+    psy_in = input(f"5.3 心理与情绪描写要求 [默认: {c.psychological_depth}]: ").strip()
+    if psy_in:
+        c.psychological_depth = psy_in
+
+    # 阶梯六：章节体量与质检门禁
+    print("\n[阶梯六：章节体量与质检门禁]")
     words = input(f"6.1 单章目标字数 [默认: {c.target_words_per_chapter}]: ").strip()
     if words.isdigit():
         c.target_words_per_chapter = int(words)
@@ -688,6 +785,9 @@ def main():
     parser.add_argument("--genre", type=str, default=None, help="小说题材类别")
     parser.add_argument("--protagonist", type=str, default=None, help="主角姓名")
     parser.add_argument("--logline", type=str, default=None, help="核心爽点/一句话主旨")
+    parser.add_argument("--style-archetype", type=str, default=None, help="文风原型（如：十日终焉×诡舍）")
+    parser.add_argument("--classical-ratio", type=str, default=None, help="文白配比（如：白话90%+，文言5%~10%）")
+    parser.add_argument("--psychological-depth", type=str, default=None, help="心理与情绪描写要求")
     parser.add_argument("--parent", type=str, default="projects", help="项目存放父目录")
 
     args = parser.parse_args()
@@ -709,6 +809,12 @@ def main():
             data.protagonist_name = args.protagonist
         if args.logline:
             data.logline = args.logline
+        if args.style_archetype:
+            data.style_archetype = args.style_archetype
+        if args.classical_ratio:
+            data.classical_ratio = args.classical_ratio
+        if args.psychological_depth:
+            data.psychological_depth = args.psychological_depth
 
     target_dir = Path(args.parent) / data.slug
     res = fan_out_constitution(data, target_dir)

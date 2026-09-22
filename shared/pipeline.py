@@ -26,6 +26,26 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 
 import yaml
 
+import subagent_registry as subregistry
+
+try:
+    from shared.check_chapter_rules import (
+        audit_chapter,
+        check_social_addressing,
+        check_epistemic_boundaries,
+    )
+except ImportError:
+    try:
+        from check_chapter_rules import (
+            audit_chapter,
+            check_social_addressing,
+            check_epistemic_boundaries,
+        )
+    except ImportError:
+        audit_chapter = None
+        check_social_addressing = None
+        check_epistemic_boundaries = None
+
 __all__ = [
     "ValidationError",
     "load_graph",
@@ -39,12 +59,16 @@ __all__ = [
     "parse_scores_from_text",
     "build_command_argv",
     "utc_now_iso",
+    "state_filename_for",
+    "state_path_of",
     "load_state",
     "write_state_atomic",
     "normalize_params",
     "cmd_status",
     "cmd_reconcile",
     "cmd_run",
+    "cmd_start",
+    "cmd_finish",
     "main",
 ]
 
@@ -139,9 +163,9 @@ def normalize_params(params: Dict[str, Any], override_params: Optional[Dict[str,
             c_num = int(merged["chapter_num"])
             merged["chapter_num"] = c_num
             merged["chapter_pad3"] = f"{c_num:03d}"
-            if override_params and "chapter_num" in override_params:
-                merged["chapter_pad"] = f"{c_num:02d}"
-            elif "chapter_pad" not in merged:
+            if ("chapter_pad" not in merged or
+                    (override_params and "chapter_num" in override_params and
+                     str((params or {}).get("chapter_num")) != str(c_num))):
                 merged["chapter_pad"] = f"{c_num:02d}"
             
             # 派生前序章节占位符（供前情探索节点引用）
@@ -247,6 +271,12 @@ def load_graph(yaml_text: str, project_root: Optional[Path] = None,
             model = node.get("model")
             if model is not None and (not isinstance(model, str) or not model.strip()):
                 raise ValidationError(f"节点 [{nid}] 的 model 属性若声明，必须是非空字符串，当前为: {model!r}")
+            subagent_type = node.get("subagent_type")
+            if subagent_type is not None and (not isinstance(subagent_type, str) or not subagent_type.strip()):
+                raise ValidationError(f"节点 [{nid}] 的 subagent_type 属性若声明，必须是非空字符串")
+            model_tier = node.get("model_tier")
+            if model_tier is not None and (not isinstance(model_tier, str) or not model_tier.strip()):
+                raise ValidationError(f"节点 [{nid}] 的 model_tier 属性若声明，必须是非空字符串")
         elif kind == "human":
             if not node.get("ask"):
                 raise ValidationError(f"human 节点 [{nid}] 必须声明 ask (人工审查说明)")
@@ -376,6 +406,60 @@ def evaluate_asserts(node: Dict[str, Any], project_root: Path) -> List[str]:
             if m not in content:
                 failures.append(f"关键情节点缺失: 文稿中未检测到指定伏笔/标记 {m!r}")
 
+    # 4) 禁止词/敏感词断言 (forbidden_terms)
+    if "forbidden_terms" in asserts:
+        forbidden = asserts["forbidden_terms"]
+        if isinstance(forbidden, str):
+            forbidden = [forbidden]
+        for term in forbidden:
+            if term in content:
+                failures.append(f"命中违规禁用词: 产物中包含禁用词 {term!r} ({primary_rel})")
+
+    # 5) 多维度评分门禁 (min_scores: {"overall": 80, "persona": 80, ...})
+    if "min_scores" in asserts and isinstance(asserts["min_scores"], dict):
+        scores = parse_scores_from_text(content)
+        for field, min_val in asserts["min_scores"].items():
+            if not scores or field not in scores:
+                failures.append(f"多维评分门禁未通过: 报告中缺少 '{field}' 打分项 ({primary_rel})")
+            elif scores[field] < float(min_val):
+                failures.append(
+                    f"多维评分门禁未通过: {field} 得分 {scores[field]} < 最低门槛 {float(min_val)} ({primary_rel})"
+                )
+
+    # 6) 社交称谓与知情视界规则检查 (addressing_check / epistemic_check / rules_check)
+    chapter_num = int(params.get("chapter_num") or params.get("chapter") or 1)
+    if chapter_num == 1:
+        ch_m = re.search(r"第?(\d+)章", primary_rel) or re.search(r"ch0*(\d+)", primary_rel)
+        if ch_m:
+            try:
+                chapter_num = int(ch_m.group(1))
+            except Exception:
+                pass
+
+    if asserts.get("addressing_check") and check_social_addressing is not None:
+        addr_issues = check_social_addressing(content, chapter_num)
+        for issue in addr_issues:
+            failures.append(f"社交称谓违规: {issue}")
+
+    if asserts.get("epistemic_check") and check_epistemic_boundaries is not None:
+        epistemic_issues = check_epistemic_boundaries(content, chapter_num)
+        for issue in epistemic_issues:
+            failures.append(f"知情视界越界: {issue}")
+
+    if asserts.get("rules_check") and audit_chapter is not None:
+        min_w = int(asserts["min_words"]) if "min_words" in asserts else 0
+        max_w = int(asserts["max_words"]) if "max_words" in asserts else 1000000
+        rule_res = audit_chapter(
+            primary_path,
+            chapter_num=chapter_num,
+            min_words=min_w,
+            max_words=max_w,
+        )
+        if not rule_res.get("density_pass", True):
+            failures.append(f"对话密度违规: 存在连续 {rule_res.get('max_gap')} 字长段落无对白")
+        for v in rule_res.get("violations", []):
+            failures.append(f"章节规则违规: {v}")
+
     return failures
 
 
@@ -402,9 +486,10 @@ def _collect_input_hashes(node: Dict[str, Any], params: Dict[str, Any],
 
 
 def derive_status(graph: Dict[str, Any], project_root: Path,
-                  old_state: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+                  old_state: Optional[Dict[str, Any]] = None,
+                  host_info: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """基于物理文件哈希与拓扑依赖，推导所有节点的实时状态。
-    
+
     状态集合：
     - current: 所有输入就绪、产物已生成且哈希与基线一致，且 assert 校验全过
     - stale: 输入发生变动，或自身定义修改，需要重跑
@@ -414,6 +499,8 @@ def derive_status(graph: Dict[str, Any], project_root: Path,
     """
     params = graph.get("params") or {}
     nodes: Dict[str, Dict[str, Any]] = graph.get("nodes") or {}
+    if host_info is None:
+        host_info = subregistry.detect_host()
     old_nodes = (old_state or {}).get("nodes") or {}
 
     current_hashes: Dict[str, Dict[str, Optional[str]]] = {}
@@ -501,11 +588,25 @@ def derive_status(graph: Dict[str, Any], project_root: Path,
         if not changed:
             break
 
+    # 3. 运行态判定 (Active Running Node)
+    active_running = (old_state or {}).get("running_node")
+    active_since = (old_state or {}).get("running_since")
+    if active_running and active_running in nodes:
+        # 如果该节点本身已经被判定为 current (产物已生成且断言通过)，说明已执行完毕，自动解除运行态
+        if status.get(active_running) == "current":
+            active_running = None
+            active_since = None
+        elif status.get(active_running) != "blocked":
+            status[active_running] = "running"
+            because[active_running] = [f"节点正在由智能体或后台任务执行中 (启动于 {active_since or '刚才'})"]
+
     # 组装新状态字典
     new_state: Dict[str, Any] = {
         "version": STATE_VERSION,
         "updatedAt": utc_now_iso(),
         "params": params,
+        "running_node": active_running,
+        "running_since": active_since,
         "nodes": {},
     }
     for nid, node in nodes.items():
@@ -516,9 +617,20 @@ def derive_status(graph: Dict[str, Any], project_root: Path,
             "inputs": current_hashes[nid],
             "outputs": [_expand_params(o, params) for o in (node.get("outputs") or [])],
             "staleBecause": "；".join(because[nid]) if because[nid] else None,
+            "running": (nid == active_running),
+            "runningSince": active_since if (nid == active_running) else None,
         }
-        if node.get("model"):
-            entry["model"] = node.get("model")
+        if node.get("kind") == "agent" or node.get("model") or node.get("model_tier"):
+            resolved = subregistry.resolve_node_model(node, (host_info or {}).get("host"))
+            if resolved.get("model"):
+                entry["model"] = resolved["model"]
+            if resolved.get("tier"):
+                entry["model_tier"] = resolved["tier"]
+            entry["model_origin"] = resolved.get("origin")
+            if resolved.get("note"):
+                entry["model_note"] = resolved["note"]
+        if node.get("subagent_type"):
+            entry["subagent_type"] = node.get("subagent_type")
         if node.get("inplace"):
             entry["inplace"] = [_expand_params(p, params) for p in node["inplace"]]
         if nid in failed_reasons:
@@ -541,7 +653,14 @@ def generate_run_prompt(node_id: str, node: Dict[str, Any], project_dir: str) ->
     params = node.get("_params") or {}
     role = node.get("role") or "小说创作专家"
     prompt_text = node.get("prompt") or ""
-    model = node.get("model")
+    host = subregistry.detect_host().get("host")
+    resolved = subregistry.resolve_node_model(node, host)
+    model = resolved.get("model")
+    model_tier = resolved.get("tier")
+    model_note = resolved.get("note")
+    model_origin = resolved.get("origin")
+    registration = subregistry.host_registration(subregistry.load_host_profile(host))
+    subagent_type = node.get("subagent_type")
     inputs = [_expand_params(p, params) for p in (node.get("inputs") or [])]
     outputs = [_expand_params(p, params) for p in (node.get("outputs") or [])]
     inplace = [_expand_params(p, params) for p in (node.get("inplace") or [])]
@@ -553,8 +672,24 @@ def generate_run_prompt(node_id: str, node: Dict[str, Any], project_dir: str) ->
             f"【小说工作流任务派发】执行项目 [{project_dir}] 的节点 [{node_id}]：",
             f"- 担当角色：{role}",
         ]
+        if subagent_type:
+            lines.append(f"- 绑定子智能体：【{subagent_type}】")
+        origin_label = {
+            "explicit-matched": "宿主已识别的显式钉死模型",
+            "role-mapped": "角色绑定",
+            "tier-mapped": "档位映射",
+            "host-unmapped": "宿主未配置该角色/档位",
+            "no-host": "未识别宿主",
+        }.get(model_origin, model_origin or "")
         if model:
-            lines.append(f"- 算力调度模型：【{model}】")
+            tier_str = f"，档位 {model_tier}" if model_tier else ""
+            suffix = f"（宿主 {host or '未知'}·{origin_label}{tier_str}）" if origin_label else ""
+            lines.append(f"- 算力调度模型：【{model}】{suffix}")
+        else:
+            tier_str = f"【{model_tier}】" if model_tier else "（档位未知）"
+            lines.append(f"- 算力调度档位：{tier_str} — 具体模型待宿主解析（{origin_label}）")
+        if model_note:
+            lines.append(f"- ⚠ 模型解析说明：{model_note}")
         lines.extend([
             f"- 关联技能：{', '.join(skills) if skills else '无'}",
             f"- 输入文件契约 (只读以下文件)：{', '.join(inputs) if inputs else '无'}",
@@ -563,6 +698,26 @@ def generate_run_prompt(node_id: str, node: Dict[str, Any], project_dir: str) ->
         if asserts:
             assert_items = [f"{k}={v}" for k, v in asserts.items()]
             lines.append(f"- 质量硬断言要求：{', '.join(assert_items)}")
+        if subagent_type:
+            dispatch_tool = registration.get("dispatch_tool") or ""
+            if "invoke_subagent" in dispatch_tool:
+                call = (f"invoke_subagent(TypeName='{subagent_type}', Role='{role}', "
+                        f"Model='{model_tier or 'inherit'}', Prompt=...)")
+            elif dispatch_tool:
+                call = dispatch_tool.replace("<name>", subagent_type)
+            else:
+                call = f"宿主原生派发通道调用已注册的【{subagent_type}】"
+            note = registration.get("dispatch_note")
+            note_str = f"（{note}）" if note else ""
+            lines.append(
+                f"- 调度推荐：若已在宿主 {host or '未知'} 中注册该子智能体，优先使用 {call} 执行{note_str}；"
+                f"亦可由当前 Agent 亲自执行落盘。"
+            )
+            if registration.get("requires_new_session"):
+                lines.append(
+                    f"- ⚠ 注册前提：宿主 {host} 的新增 agent 类型只在会话启动时注册；"
+                    f"若【{subagent_type}】尚未注册，需先写好定义文件再新开会话。"
+                )
         lines.append(f"\n【核心执行指令】：\n{prompt_text.strip()}")
         lines.append(
             f"\n请使用你的工具读取输入文件并生成符合要求的文本直接写入指定产出文件。"
@@ -591,13 +746,31 @@ def utc_now_iso() -> str:
     return now.isoformat().replace("+00:00", "Z")
 
 
-def state_path_of(project_root: Path) -> Path:
-    return Path(project_root) / STATE_FILENAME
+def state_filename_for(graph_file: str = GRAPH_FILENAME) -> str:
+    """根据工作流文件名推导状态文件名。
+    如 graph.yaml -> pipeline.json; volume_graph.yaml -> volume_pipeline.json
+    """
+    gname = Path(graph_file).name
+    if gname in ("graph.yaml", "graph.yml"):
+        return STATE_FILENAME
+    base = gname
+    for ext in (".yaml", ".yml"):
+        if base.endswith(ext):
+            base = base[:-len(ext)]
+            break
+    if base.endswith("_graph"):
+        prefix = base[:-len("_graph")]
+        return f"{prefix}_pipeline.json"
+    return f"{base}_pipeline.json"
 
 
-def load_state(project_root: Path) -> Dict[str, Any]:
-    """读取已有的 pipeline.json 状态基线。"""
-    p = state_path_of(project_root)
+def state_path_of(project_root: Path, graph_file: str = GRAPH_FILENAME) -> Path:
+    return Path(project_root) / state_filename_for(graph_file)
+
+
+def load_state(project_root: Path, graph_file: str = GRAPH_FILENAME) -> Dict[str, Any]:
+    """读取已有的 pipeline.json 或对应状态基线。"""
+    p = state_path_of(project_root, graph_file=graph_file)
     if not p.is_file():
         return {}
     try:
@@ -608,7 +781,7 @@ def load_state(project_root: Path) -> Dict[str, Any]:
 
 
 def write_state_atomic(path: Path, state: Dict[str, Any]) -> None:
-    """原子更新 pipeline.json：先写临时文件再原子 replace，杜绝文件损坏。"""
+    """原子更新状态文件：先写临时文件再原子 replace，杜绝文件损坏。"""
     path = Path(path)
     fd, tmp_name = tempfile.mkstemp(dir=str(path.parent), prefix=".pipeline-", suffix=".tmp")
     try:
@@ -632,62 +805,75 @@ def build_command_argv(node: Dict[str, Any], params: Dict[str, Any]) -> List[str
 
 
 # ---------------------------------------------------------------------------
-# 8. 核心 CLI 命令实现 (status / reconcile / run)
+# 8. 核心 CLI 命令实现 (status / reconcile / run / start / finish)
 # ---------------------------------------------------------------------------
 
 def _load_project_graph(project_root: Path,
-                        override_params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-    gpath = project_root / GRAPH_FILENAME
+                        override_params: Optional[Dict[str, Any]] = None,
+                        graph_file: str = GRAPH_FILENAME) -> Dict[str, Any]:
+    gpath = project_root / graph_file
     if not gpath.is_file():
-        raise ValidationError(f"项目目录缺失 {GRAPH_FILENAME}: {project_root}")
+        raise ValidationError(f"项目目录缺失 {graph_file}: {project_root}")
     return load_graph(gpath.read_text(encoding="utf-8"), project_root=project_root,
                       override_params=override_params)
 
 
-def cmd_status(project_dir: str, override_params: Optional[Dict[str, Any]] = None) -> int:
-    """计算哈希、评估 assert，并重写更新 pipeline.json。支持动态指定章节参数。"""
+def cmd_status(project_dir: str, override_params: Optional[Dict[str, Any]] = None,
+               graph_file: str = GRAPH_FILENAME) -> int:
+    """计算哈希、评估 assert，并重写更新对应状态文件。支持动态指定章节参数与多工作流。"""
     project_root = Path(project_dir).resolve()
     try:
-        graph = _load_project_graph(project_root, override_params=override_params)
+        graph = _load_project_graph(project_root, override_params=override_params, graph_file=graph_file)
     except ValidationError as e:
         print(f"[status] 校验失败: {e}")
         return 1
 
-    old_state = load_state(project_root)
-    new_state = derive_status(graph, project_root, old_state)
-    write_state_atomic(state_path_of(project_root), new_state)
+    old_state = load_state(project_root, graph_file=graph_file)
+    host_info = subregistry.detect_host()
+    new_state = derive_status(graph, project_root, old_state, host_info=host_info)
+    target_state_path = state_path_of(project_root, graph_file=graph_file)
+    write_state_atomic(target_state_path, new_state)
 
     curr_ch = (graph.get("params") or {}).get("chapter_num")
-    ch_info = f" [第 {curr_ch} 章]" if curr_ch is not None else ""
+    curr_vol = (graph.get("params") or {}).get("volume_num")
+    extra_info = ""
+    if curr_ch is not None:
+        extra_info = f" [第 {curr_ch} 章]"
+    elif curr_vol is not None:
+        extra_info = f" [第 {curr_vol} 卷]"
 
-    print(f"[status] 状态已更新{ch_info}: {state_path_of(project_root)}")
+    print(f"[status] 状态已更新{extra_info}: {target_state_path}")
+    print(subregistry.describe_host(host_info))
     for nid, entry in (new_state.get("nodes") or {}).items():
         reason = f" ({entry['staleBecause']})" if entry.get("staleBecause") else ""
         print(f"  {nid:<20} {entry['status']}{reason}")
     return 0
 
 
-def cmd_reconcile(project_dir: str, override_params: Optional[Dict[str, Any]] = None) -> int:
+def cmd_reconcile(project_dir: str, override_params: Optional[Dict[str, Any]] = None,
+                  graph_file: str = GRAPH_FILENAME) -> int:
     """强制重新扫盘，清除不一致并全量重写状态基线。"""
     project_root = Path(project_dir).resolve()
     try:
-        graph = _load_project_graph(project_root, override_params=override_params)
+        graph = _load_project_graph(project_root, override_params=override_params, graph_file=graph_file)
     except ValidationError as e:
         print(f"[reconcile] 校验失败: {e}")
         return 1
 
     new_state = derive_status(graph, project_root, None)
-    write_state_atomic(state_path_of(project_root), new_state)
-    print(f"[reconcile] 基线已重新校准: {state_path_of(project_root)}")
+    target_state_path = state_path_of(project_root, graph_file=graph_file)
+    write_state_atomic(target_state_path, new_state)
+    print(f"[reconcile] 基线已重新校准: {target_state_path}")
     return 0
 
 
-def cmd_run(node_id: str, project_dir: str, override_params: Optional[Dict[str, Any]] = None) -> int:
+def cmd_run(node_id: str, project_dir: str, override_params: Optional[Dict[str, Any]] = None,
+            graph_file: str = GRAPH_FILENAME) -> int:
     """执行单个节点：command 直接子进程运行；human 记录确认时间戳；agent 输出 runPrompt。"""
     project_root = Path(project_dir).resolve()
     project_label = Path(project_dir).as_posix()
     try:
-        graph = _load_project_graph(project_root, override_params=override_params)
+        graph = _load_project_graph(project_root, override_params=override_params, graph_file=graph_file)
     except ValidationError as e:
         print(f"[run] 校验失败: {e}")
         return 1
@@ -705,7 +891,7 @@ def cmd_run(node_id: str, project_dir: str, override_params: Optional[Dict[str, 
         argv = build_command_argv(node, params)
         print(f"[run] 执行 command 节点 [{node_id}]: {' '.join(argv)}")
         res = subprocess.run(argv, cwd=str(project_root))
-        cmd_status(project_dir, override_params=override_params)
+        cmd_status(project_dir, override_params=override_params, graph_file=graph_file)
         return res.returncode
 
     if kind == "human":
@@ -720,13 +906,14 @@ def cmd_run(node_id: str, project_dir: str, override_params: Optional[Dict[str, 
                 shutil.copy2(src, dst)
                 print(f"[run] 自动归档入库: {inputs[0]} -> {outputs[0]}")
 
-        state = load_state(project_root)
+        state = load_state(project_root, graph_file=graph_file)
         nodes_state = state.setdefault("nodes", {})
         entry = nodes_state.setdefault(node_id, {})
         entry["ackAt"] = utc_now_iso()
         entry["inputs"] = _collect_input_hashes(node, params, project_root)
-        write_state_atomic(state_path_of(project_root), state)
-        cmd_status(project_dir, override_params=override_params)
+        target_state_path = state_path_of(project_root, graph_file=graph_file)
+        write_state_atomic(target_state_path, state)
+        cmd_status(project_dir, override_params=override_params, graph_file=graph_file)
         print(f"[run] 人工节点 [{node_id}] 已审批放行 (ackAt={entry['ackAt']})")
         return 0
 
@@ -739,6 +926,45 @@ def cmd_run(node_id: str, project_dir: str, override_params: Optional[Dict[str, 
         return 2
 
     return 1
+
+
+def cmd_start(node_id: str, project_dir: str, override_params: Optional[Dict[str, Any]] = None,
+              graph_file: str = GRAPH_FILENAME) -> int:
+    """将指定节点标记为正在运行 (running)，并原子写入状态文件，触发 WebUI 实时高亮。"""
+    project_root = Path(project_dir).resolve()
+    state = load_state(project_root, graph_file=graph_file)
+    state["running_node"] = node_id
+    state["running_since"] = utc_now_iso()
+    target_state_path = state_path_of(project_root, graph_file=graph_file)
+    try:
+        graph = _load_project_graph(project_root, override_params=override_params, graph_file=graph_file)
+        new_state = derive_status(graph, project_root, state)
+        write_state_atomic(target_state_path, new_state)
+    except Exception:
+        write_state_atomic(target_state_path, state)
+
+    print(f"[start] 节点 [{node_id}] 已标记为运行中 (running)，WebUI 实时画布已同步点亮")
+    return 0
+
+
+def cmd_finish(node_id: str, project_dir: str, override_params: Optional[Dict[str, Any]] = None,
+               graph_file: str = GRAPH_FILENAME) -> int:
+    """结束指定节点的运行状态，并重新校验断言与状态。"""
+    project_root = Path(project_dir).resolve()
+    state = load_state(project_root, graph_file=graph_file)
+    if state.get("running_node") == node_id:
+        state["running_node"] = None
+        state["running_since"] = None
+    target_state_path = state_path_of(project_root, graph_file=graph_file)
+    try:
+        graph = _load_project_graph(project_root, override_params=override_params, graph_file=graph_file)
+        new_state = derive_status(graph, project_root, state)
+        write_state_atomic(target_state_path, new_state)
+    except Exception:
+        write_state_atomic(target_state_path, state)
+
+    print(f"[finish] 节点 [{node_id}] 运行态已结束，最新状态已重新校验")
+    return 0
 
 
 def _reconfigure_stdio() -> None:
@@ -757,25 +983,45 @@ def main(argv: Optional[List[str]] = None) -> int:
     p_status = sub.add_parser("status", help="重算哈希与状态")
     p_status.add_argument("--project", required=True, help="小说课题项目目录")
     p_status.add_argument("--chapter", type=int, default=None, help="动态指定章节序号 (如 11)")
+    p_status.add_argument("--graph", default=GRAPH_FILENAME, help=f"指定工作流图谱文件 (默认: {GRAPH_FILENAME})")
 
     p_rec = sub.add_parser("reconcile", help="校准物理基线")
     p_rec.add_argument("--project", required=True, help="小说课题项目目录")
     p_rec.add_argument("--chapter", type=int, default=None, help="动态指定章节序号 (如 11)")
+    p_rec.add_argument("--graph", default=GRAPH_FILENAME, help=f"指定工作流图谱文件 (默认: {GRAPH_FILENAME})")
 
     p_run = sub.add_parser("run", help="运行单节点")
     p_run.add_argument("node_id", help="节点 ID")
     p_run.add_argument("--project", required=True, help="小说课题项目目录")
     p_run.add_argument("--chapter", type=int, default=None, help="动态指定章节序号 (如 11)")
+    p_run.add_argument("--graph", default=GRAPH_FILENAME, help=f"指定工作流图谱文件 (默认: {GRAPH_FILENAME})")
+
+    p_start = sub.add_parser("start", help="标记节点为正在运行 (点亮 WebUI 动态光效)")
+    p_start.add_argument("node_id", help="节点 ID")
+    p_start.add_argument("--project", required=True, help="小说课题项目目录")
+    p_start.add_argument("--chapter", type=int, default=None, help="动态指定章节序号 (如 11)")
+    p_start.add_argument("--graph", default=GRAPH_FILENAME, help=f"指定工作流图谱文件 (默认: {GRAPH_FILENAME})")
+
+    p_finish = sub.add_parser("finish", help="结束节点运行态并重算状态")
+    p_finish.add_argument("node_id", help="节点 ID")
+    p_finish.add_argument("--project", required=True, help="小说课题项目目录")
+    p_finish.add_argument("--chapter", type=int, default=None, help="动态指定章节序号 (如 11)")
+    p_finish.add_argument("--graph", default=GRAPH_FILENAME, help=f"指定工作流图谱文件 (默认: {GRAPH_FILENAME})")
 
     args = parser.parse_args(argv)
     override = {"chapter_num": args.chapter} if getattr(args, "chapter", None) is not None else None
+    graph_file = getattr(args, "graph", GRAPH_FILENAME)
 
     if args.command == "status":
-        return cmd_status(args.project, override_params=override)
+        return cmd_status(args.project, override_params=override, graph_file=graph_file)
     if args.command == "reconcile":
-        return cmd_reconcile(args.project, override_params=override)
+        return cmd_reconcile(args.project, override_params=override, graph_file=graph_file)
     if args.command == "run":
-        return cmd_run(args.node_id, args.project, override_params=override)
+        return cmd_run(args.node_id, args.project, override_params=override, graph_file=graph_file)
+    if args.command == "start":
+        return cmd_start(args.node_id, args.project, override_params=override, graph_file=graph_file)
+    if args.command == "finish":
+        return cmd_finish(args.node_id, args.project, override_params=override, graph_file=graph_file)
     return 0
 
 

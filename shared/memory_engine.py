@@ -248,12 +248,13 @@ class CausalConsistencyChecker:
 class MemoryEngine:
     """长篇小说记忆引擎：管理状态快照、执行变更回写并生成本章上下文任务包。"""
 
-    def __init__(self, project_dir: Path):
+    def __init__(self, project_dir: Path, *, create_dirs: bool = True):
         self.project_dir = Path(project_dir).resolve()
         self.ledger_dir = self.project_dir / "设定" / "事实账本"
         self.ledger_file = self.ledger_dir / "snapshot.json"
         self.history_dir = self.ledger_dir / "history"
-        self._ensure_dirs()
+        if create_dirs:
+            self._ensure_dirs()
 
     def _ensure_dirs(self):
         self.ledger_dir.mkdir(parents=True, exist_ok=True)

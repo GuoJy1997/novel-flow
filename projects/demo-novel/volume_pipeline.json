@@ -1,0 +1,149 @@
+{
+  "version": 1,
+  "updatedAt": "2026-09-22T17:02:51Z",
+  "params": {
+    "volume_num": 2,
+    "volume_pad": "02",
+    "volume_name": "沉默矩阵",
+    "genre": "悬疑推理 × 规则怪谈 × 高智商博弈",
+    "target_chapters": 20,
+    "chapter_num": 1,
+    "chapter_pad3": "001",
+    "chapter_pad": "01",
+    "chapter_prev_num": 1,
+    "chapter_prev_pad": "01",
+    "chapter_prev_pad3": "001"
+  },
+  "running_node": null,
+  "running_since": null,
+  "nodes": {
+    "volume_premise": {
+      "kind": "agent",
+      "role": "分卷立意与终局定位官",
+      "status": "stale",
+      "inputs": {
+        "设定/大纲/": "sha256:2fb5fca154d3876c56eeb32ac0343e023797b38e31dff4236d4ca9eed517f97b",
+        "设定/世界观/": "sha256:77e23b793c6f62ebf4af8ec00b9aa5c109bb9dd61d8f478c633a069ab75244f9"
+      },
+      "outputs": [
+        "工作区/分卷策划/第02卷_01_立意与核心命题.md"
+      ],
+      "staleBecause": "产物文件尚未生成: 工作区/分卷策划/第02卷_01_立意与核心命题.md",
+      "running": false,
+      "runningSince": null,
+      "model_origin": "host-unmapped",
+      "model_note": "宿主 qoder 未给角色 ?/档位 ? 配置模型；请编辑 subagents/manifest.json 的 host_profiles.qoder.role_models"
+    },
+    "dungeon_physics": {
+      "kind": "agent",
+      "role": "副本物理法则与生存机制架构师",
+      "status": "blocked",
+      "inputs": {
+        "工作区/分卷策划/第02卷_01_立意与核心命题.md": null,
+        "设定/世界观/": "sha256:77e23b793c6f62ebf4af8ec00b9aa5c109bb9dd61d8f478c633a069ab75244f9"
+      },
+      "outputs": [
+        "工作区/分卷策划/第02卷_02_副本物理与生存法则.md"
+      ],
+      "staleBecause": "输入文件缺失: 工作区/分卷策划/第02卷_01_立意与核心命题.md",
+      "running": false,
+      "runningSince": null,
+      "model": "qmodel_38max",
+      "model_tier": "pro",
+      "model_origin": "role-mapped",
+      "model_note": "角色 novel_dungeon_architect 在宿主 qoder 由 role_models 绑定为 qmodel_38max，已忽略图谱里遗留的模型名 gemini-3.8-flash-high",
+      "subagent_type": "novel_dungeon_architect"
+    },
+    "faction_agenda_matrix": {
+      "kind": "agent",
+      "role": "多方势力博弈与阴谋精算师",
+      "status": "blocked",
+      "inputs": {
+        "工作区/分卷策划/第02卷_02_副本物理与生存法则.md": null,
+        "设定/人物/": "sha256:2db8694ced4efe4a8ff7dd4402c74f1dbc3d983ad21515e780af71f71af0542f"
+      },
+      "outputs": [
+        "工作区/分卷策划/第02卷_03_势力暗算盘与博弈矩阵.md"
+      ],
+      "staleBecause": "输入文件缺失: 工作区/分卷策划/第02卷_02_副本物理与生存法则.md",
+      "running": false,
+      "runningSince": null,
+      "model": "qmodel_38max",
+      "model_tier": "pro",
+      "model_origin": "role-mapped",
+      "model_note": "角色 novel_faction_schemer 在宿主 qoder 由 role_models 绑定为 qmodel_38max，已忽略图谱里遗留的模型名 gemini-3.8-flash-high",
+      "subagent_type": "novel_faction_schemer"
+    },
+    "revelation_ladder": {
+      "kind": "agent",
+      "role": "反转链与认知阶梯设计官",
+      "status": "blocked",
+      "inputs": {
+        "工作区/分卷策划/第02卷_02_副本物理与生存法则.md": null,
+        "工作区/分卷策划/第02卷_03_势力暗算盘与博弈矩阵.md": null
+      },
+      "outputs": [
+        "工作区/分卷策划/第02卷_04_四阶认知反转链.md"
+      ],
+      "staleBecause": "输入文件缺失: 工作区/分卷策划/第02卷_02_副本物理与生存法则.md, 工作区/分卷策划/第02卷_03_势力暗算盘与博弈矩阵.md",
+      "running": false,
+      "runningSince": null,
+      "model_origin": "host-unmapped",
+      "model_note": "宿主 qoder 未给角色 ?/档位 ? 配置模型；请编辑 subagents/manifest.json 的 host_profiles.qoder.role_models"
+    },
+    "pacing_beats": {
+      "kind": "agent",
+      "role": "三幕节拍器与逐章细纲架构师",
+      "status": "blocked",
+      "inputs": {
+        "工作区/分卷策划/第02卷_04_四阶认知反转链.md": null,
+        "工作区/分卷策划/第02卷_03_势力暗算盘与博弈矩阵.md": null,
+        "工作区/分卷策划/第02卷_02_副本物理与生存法则.md": null
+      },
+      "outputs": [
+        "工作区/分卷策划/第02卷_05_逐章细纲矩阵.md"
+      ],
+      "staleBecause": "输入文件缺失: 工作区/分卷策划/第02卷_04_四阶认知反转链.md, 工作区/分卷策划/第02卷_03_势力暗算盘与博弈矩阵.md, 工作区/分卷策划/第02卷_02_副本物理与生存法则.md",
+      "running": false,
+      "runningSince": null,
+      "model_origin": "host-unmapped",
+      "model_note": "宿主 qoder 未给角色 ?/档位 ? 配置模型；请编辑 subagents/manifest.json 的 host_profiles.qoder.role_models"
+    },
+    "clue_ledger_sync": {
+      "kind": "agent",
+      "role": "伏笔总账同步与审查员",
+      "status": "blocked",
+      "inputs": {
+        "工作区/分卷策划/第02卷_05_逐章细纲矩阵.md": null,
+        "设定/事实账本/snapshot.json": "sha256:f1c30a48bf7db7048187d286abb16cd0889f1a5e88a9143b2e85cf27a337f005"
+      },
+      "outputs": [
+        "工作区/分卷策划/第02卷_06_伏笔生命周期总账.md"
+      ],
+      "staleBecause": "输入文件缺失: 工作区/分卷策划/第02卷_05_逐章细纲矩阵.md",
+      "running": false,
+      "runningSince": null,
+      "model_origin": "host-unmapped",
+      "model_note": "宿主 qoder 未给角色 ?/档位 ? 配置模型；请编辑 subagents/manifest.json 的 host_profiles.qoder.role_models"
+    },
+    "author_accept": {
+      "kind": "human",
+      "role": null,
+      "status": "blocked",
+      "inputs": {
+        "工作区/分卷策划/第02卷_02_副本物理与生存法则.md": null,
+        "工作区/分卷策划/第02卷_03_势力暗算盘与博弈矩阵.md": null,
+        "工作区/分卷策划/第02卷_05_逐章细纲矩阵.md": null,
+        "工作区/分卷策划/第02卷_06_伏笔生命周期总账.md": null
+      },
+      "outputs": [
+        "设定/分卷/第02卷_沉默矩阵_完整故事大纲.md"
+      ],
+      "staleBecause": "输入文件缺失: 工作区/分卷策划/第02卷_02_副本物理与生存法则.md, 工作区/分卷策划/第02卷_03_势力暗算盘与博弈矩阵.md, 工作区/分卷策划/第02卷_05_逐章细纲矩阵.md, 工作区/分卷策划/第02卷_06_伏笔生命周期总账.md",
+      "running": false,
+      "runningSince": null,
+      "ask": "请创作者审阅本卷的副本物理机制、四方暗算盘、四阶认知反转链、逐章细纲矩阵及伏笔总账，确认无误后点击放行归档为正式分卷资产。",
+      "ackAt": null
+    }
+  }
+}

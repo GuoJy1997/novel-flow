@@ -8,6 +8,7 @@
   let currentState = null;
   let selectedNodeId = null;
   let activeEventSource = null;
+  let detectedHost = null; // 当前宿主 Agent（由服务端环境指纹感知: qoder/antigravity/unknown）
 
   // 画布变换状态 (Pan & Zoom)
   let zoom = 1.0;
@@ -22,20 +23,28 @@
   let dragOffsetX = 0;
   let dragOffsetY = 0;
   let nodePositions = {}; // nodeId -> { x, y }
+  let currentWorkflow = 'graph.yaml';
+  let workflowPositions = {}; // project::workflow -> nodePositions
 
   // 连线状态
   let connectingFromId = null;
-  let isDraggingConnect = false;
+  let isDragConnecting = false;
+  let connectStartMousePos = null;
   let tempEdgeStartPos = { x: 0, y: 0 };
 
-  // 动态章节状态
+  // 动态章节/分卷状态
   let currentChapter = 1;
 
   // DOM 元素引用
   const projectSelect = document.getElementById('projectSelect');
+  const workflowSelect = document.getElementById('workflowSelect');
   const btnOpenNewProjectModal = document.getElementById('btnOpenNewProjectModal');
   const btnOpenAddPathModal = document.getElementById('btnOpenAddPathModal');
 
+  const chapterSelectorGroup = document.getElementById('chapterSelectorGroup');
+  const chapterSelectorLabel = document.getElementById('chapterSelectorLabel');
+  const chapterUnitPrefix = document.getElementById('chapterUnitPrefix');
+  const chapterUnitSuffix = document.getElementById('chapterUnitSuffix');
   const chapterInput = document.getElementById('chapterInput');
   const btnPrevChapter = document.getElementById('btnPrevChapter');
   const btnNextChapter = document.getElementById('btnNextChapter');
@@ -133,44 +142,470 @@
   let currentReadingFile = '';
   let availableSkills = [];
 
+  let boundContext = null;
+  let uiSession = null;
+  let uiReady = false;
+  let graphRevision = null;
+  let graphDirty = false;
+  let inspectorDirty = false;
+  let readerDirty = false;
+  let editVersion = 0;
+  let graphLoadVersion = 0;
+  let pendingGraphRefresh = false;
+  let graphRefreshTimer = null;
+  let stateRefreshTimer = null;
+  let graphRefreshInFlight = false;
+  let stateRefreshInFlight = false;
+  let stateRefreshAgain = false;
+  let saveQueue = Promise.resolve();
+  let pendingSaves = 0;
+  let saveConflict = false;
+  let persistedEditVersion = 0;
+  let readerLoadVersion = 0;
+  let explicitChapter = null;
+
+  function projectRequestValue() {
+    return boundContext ? boundContext.project_path : currentProject;
+  }
+
+  function contextQuery(targetChapter = explicitChapter) {
+    const query = new URLSearchParams({ project: projectRequestValue(), workflow: currentWorkflow });
+    // 绑定服务自己的 chapter 是唯一来源；旧入口只在用户明确切换时覆盖。
+    if (!boundContext && targetChapter !== null) query.set('chapter', targetChapter);
+    return query.toString();
+  }
+
+  async function requestJson(url, options = {}) {
+    const response = await fetch(url, { cache: 'no-store', ...options });
+    const data = await response.json();
+    if (!response.ok) {
+      const error = new Error(typeof data.detail === 'string' ? data.detail : JSON.stringify(data.detail || `HTTP ${response.status}`));
+      error.status = response.status;
+      throw error;
+    }
+    return data;
+  }
+
+  function showSyncNotice(message, error = false) {
+    const notice = document.getElementById('studioSyncNotice');
+    document.getElementById('studioSyncMessage').textContent = message;
+    notice.classList.remove('hidden');
+    notice.classList.toggle('has-error', error);
+  }
+
+  function reportSyncError(error) {
+    appendLog(`[error] ${error.message}`);
+    showSyncNotice(`同步失败：${error.message}。可点击重新载入重试；未保存内容仍保留。`, true);
+  }
+
+  function hasUnsavedChanges() {
+    return graphDirty || inspectorDirty || readerDirty;
+  }
+
+  function graphRefreshBlocked() {
+    return hasUnsavedChanges() || pendingSaves > 0 || draggingNodeId || connectingFromId || isPanning ||
+      inspectorDrawer.contains(document.activeElement) ||
+      Array.from(document.querySelectorAll('.modal-backdrop')).some(el => !el.classList.contains('hidden'));
+  }
+
+  function markInspectorDirty() {
+    if (!selectedNodeId) return;
+    inspectorDirty = true;
+    editVersion++;
+  }
+
+  function confirmInspectorDiscard() {
+    if (inspectorDirty && !confirm('当前节点属性尚未保存，确定丢弃这些输入吗？')) return false;
+    inspectorDirty = false;
+    return true;
+  }
+
+  function allowContextSwitch() {
+    if (!uiReady || boundContext) return false;
+    if (pendingSaves) { showSyncNotice('请等待配置保存完成后再切换。'); return false; }
+    if (hasUnsavedChanges() && !confirm('切换目标会丢弃未保存的配置与文件编辑，确定继续吗？')) return false;
+    graphDirty = inspectorDirty = readerDirty = false;
+    pendingGraphRefresh = false;
+    currentReadingFile = '';
+    readerLoadVersion++;
+    readerModal.classList.add('hidden');
+    selectedNodeId = null;
+    inspectorDrawer.classList.remove('open');
+    currentGraph = null;
+    graphRevision = null;
+    nodesLayer.innerHTML = '';
+    renderEdges();
+    return true;
+  }
+
+  function deferGraphRefresh() {
+    pendingGraphRefresh = true;
+    showSyncNotice(saveConflict
+      ? '保存冲突：磁盘图谱已变化，草稿仍保留。请先复制保留需要的内容，再点击重新载入并确认丢弃。'
+      : '图谱同步待检查；拖拽或编辑期间暂缓载入。保存若有版本冲突会保留草稿，也可明确重新载入。', saveConflict);
+  }
+
+  function scheduleGraphRefresh() {
+    pendingGraphRefresh = true;
+    clearTimeout(graphRefreshTimer);
+    graphRefreshTimer = setTimeout(flushGraphRefresh, 180);
+  }
+
+  async function flushGraphRefresh() {
+    if (!uiReady || !pendingGraphRefresh || graphRefreshInFlight) return;
+    if (graphRefreshBlocked()) {
+      deferGraphRefresh();
+      return;
+    }
+    pendingGraphRefresh = false;
+    graphRefreshInFlight = true;
+    try {
+      await loadGraph(currentProject, null, true);
+    } catch (error) {
+      reportSyncError(error);
+    } finally {
+      graphRefreshInFlight = false;
+      if (pendingGraphRefresh && !graphRefreshBlocked()) scheduleGraphRefresh();
+    }
+  }
+
+  function scheduleStateRefresh() {
+    clearTimeout(stateRefreshTimer);
+    stateRefreshTimer = setTimeout(() => refreshState().catch(reportSyncError), 120);
+  }
+
+  async function refreshState() {
+    if (!uiReady || !currentProject) return;
+    if (stateRefreshInFlight) { stateRefreshAgain = true; return; }
+    const query = contextQuery();
+    const loadedVersion = graphLoadVersion;
+    stateRefreshInFlight = true;
+    try {
+      const data = await requestJson(`/api/state?${query}`);
+      if (query !== contextQuery() || loadedVersion !== graphLoadVersion) return;
+      if (data.revision !== graphRevision) {
+        scheduleGraphRefresh();
+        return;
+      }
+      applyStateUpdate(data);
+    } finally {
+      stateRefreshInFlight = false;
+      if (stateRefreshAgain) { stateRefreshAgain = false; scheduleStateRefresh(); }
+    }
+  }
+
+  function eventMatchesContext(data) {
+    if (data.workflow !== currentWorkflow) return false;
+    if (boundContext) {
+      return data.project === boundContext.bound_project && data.path === boundContext.project_path;
+    }
+    return data.project === currentProject || data.path === currentProject;
+  }
+
   function formatModelShort(model) {
-    if (!model) return '⚡ Gemini 3.8 Flash (High)';
+    if (!model) return '🤖 未指定模型';
     const m = model.toLowerCase();
+    // Qoder 系统模型内部名 + BYOK slug 与显示名对照 (见 docs/qoder-model-routing.md)
+    if (m === 'qfmodel' || m.includes('qwen')) return '⚡ Qwen 3.8 Flash';
+    if (m === 'qmodel_38max') return '⚡ Qwen 3.8 Max';
+    if (m === 'kmodel_latest' || m.includes('kimi')) return '🔍 Kimi K3';
+    if (m === 'kmodel') return '🔍 Kimi K2.7 Code';
     if (m.includes('opus')) return '🧠 Claude Opus 4.6 (Thinking)';
     if (m.includes('sonnet')) return '🧠 Claude 3.7 Sonnet (Thinking)';
     if (m === 'gemini-3.8-flash-high') return '⚡ Gemini 3.8 Flash (High)';
     if (m === 'gemini-3.8-flash-medium') return '⚡ Gemini 3.8 Flash (Medium)';
     if (m === 'gemini-3.8-flash-low') return '⚡ Gemini 3.8 Flash (Low)';
-    if (m.includes('flash')) return '⚡ Gemini 3.8 Flash';
+    if (m.includes('gemini') || m.includes('flash')) return '⚡ Gemini 3.8 Flash';
     return `🤖 ${model.length > 25 ? model.substring(0, 23) + '..' : model}`;
   }
 
   function getModelClass(model) {
     if (!model) return 'model-default';
     const m = model.toLowerCase();
+    if (m === 'qfmodel' || m === 'qmodel_38max' || m.includes('qwen')) return 'model-qwen';
+    if (m === 'kmodel_latest' || m === 'kmodel' || m.includes('kimi')) return 'model-kimi';
     if (m.includes('opus') || m.includes('claude')) return 'model-claude';
     if (m.includes('gemini') || m.includes('flash')) return 'model-gemini';
     return 'model-custom';
+  }
+
+  // 宿主 Agent 感知：显示名与徽标更新
+  function hostDisplayName() {
+    if (detectedHost === 'qoder') return 'Qoder';
+    if (detectedHost === 'antigravity') return 'Antigravity';
+    return '宿主 Agent';
+  }
+
+  function updateHostBadge() {
+    const badge = document.getElementById('hostBadge');
+    const nameEl = document.getElementById('hostBadgeName');
+    if (!badge || !nameEl) return;
+    if (!detectedHost || detectedHost === 'unknown') {
+      badge.classList.add('hidden');
+      return;
+    }
+    badge.classList.remove('hidden');
+    badge.className = `host-badge host-${detectedHost}`;
+    badge.title = `当前由 ${hostDisplayName()} 驱动工作流，各节点模型档位已按该宿主的模型档案自动适配`;
+    nameEl.textContent = hostDisplayName();
+  }
+
+  // 取节点的"实际执行模型"：状态文件中的宿主解析结果优先，图谱原始声明兜底
+  function getResolvedModel(id, node) {
+    const stateEntry = (currentState && currentState.nodes) ? currentState.nodes[id] : null;
+    return (stateEntry && stateEntry.model) ? stateEntry.model : node.model;
+  }
+
+  function getStateEntry(id) {
+    return (currentState && currentState.nodes) ? currentState.nodes[id] : null;
+  }
+
+  function nodeStatus(id) {
+    const entry = getStateEntry(id);
+    return entry && (entry.running || entry.status === 'running') ? 'running' : (entry?.status || 'stale');
+  }
+
+  function updateInspectorStatus() {
+    if (!selectedNodeId) return;
+    const entry = getStateEntry(selectedNodeId);
+    const status = nodeStatus(selectedNodeId);
+    inspectorStatusPill.textContent = status === 'running' ? '正在运行中...' : status;
+    inspectorStatusPill.className = `status-pill status-${status}`;
+    inspectorStatusReason.textContent = entry?.staleBecause || (status === 'running' ? '智能体任务正在执行中...' : '');
+  }
+
+  function applyStateUpdate(data) {
+    if (!data.state || !data.state.nodes) throw new Error('节点状态响应格式错误');
+    currentState = data.state;
+    if (data.host !== undefined) { detectedHost = data.host || null; updateHostBadge(); }
+    // 只修改状态元素；不 renderGraph，不 selectNode，也不重填任何输入。
+    Object.keys(currentGraph?.nodes || {}).forEach(id => {
+      const card = document.getElementById(`node-${id}`);
+      if (!card) return;
+      const status = nodeStatus(id);
+      Array.from(card.classList).filter(name => name.startsWith('status-')).forEach(name => card.classList.remove(name));
+      card.classList.add(`status-${status}`);
+      const indicator = card.querySelector('.status-indicator');
+      indicator.className = `status-indicator ${status}`;
+      indicator.title = `节点状态: ${status}`;
+      let badge = card.querySelector('.node-running-badge');
+      if (status === 'running' && !badge) {
+        badge = document.createElement('div');
+        badge.className = 'node-running-badge';
+        badge.innerHTML = '<span class="running-dot-pulse"></span><span>正在由智能体执行中...</span>';
+        card.querySelector('.node-body').appendChild(badge);
+      } else if (status !== 'running' && badge) badge.remove();
+    });
+    updateInspectorStatus();
+    renderEdges();
+  }
+
+  // ==========================================
+  // 0. 全局轻量通知反馈 (Toast)
+  // ==========================================
+  let toastTimer = null;
+  function showToast(msg, type = 'success', duration = 2500) {
+    const toast = document.getElementById('studioToast');
+    const toastIcon = document.getElementById('toastIcon');
+    const toastMsg = document.getElementById('toastMsg');
+    if (!toast || !toastMsg) return;
+
+    toast.className = `studio-toast toast-${type}`;
+    if (toastIcon) {
+      toastIcon.textContent = type === 'success' ? '✅' : (type === 'error' ? '❌' : 'ℹ️');
+    }
+    toastMsg.textContent = msg;
+    toast.classList.remove('hidden');
+
+    if (toastTimer) clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => {
+      toast.classList.add('hidden');
+    }, duration);
+  }
+
+  // ==========================================
+  // 0. WebSocket 双向实时同步引擎
+  // ==========================================
+  let liveWs = null;
+  let livePingTimer = null;
+  let liveReconnectTimer = null;
+  const liveStatusBadge = document.getElementById('liveStatusBadge');
+
+  function updateLiveBadge(online, text = null) {
+    if (!liveStatusBadge) return;
+    const textEl = liveStatusBadge.querySelector('.live-text');
+    if (online) {
+      liveStatusBadge.className = 'live-status-badge live-online';
+      liveStatusBadge.title = '实时双向同步已连接：底层文件变动与 Agent 执行状态将自动秒级刷新';
+      if (textEl) textEl.textContent = text || '实时同步中';
+    } else {
+      liveStatusBadge.className = 'live-status-badge live-offline';
+      liveStatusBadge.title = '实时通道已断开，正在尝试自动重连...点击可立即重试';
+      if (textEl) textEl.textContent = text || '重连中...';
+    }
+  }
+
+  function initLiveWebSocket() {
+    if (liveWs && (liveWs.readyState === WebSocket.OPEN || liveWs.readyState === WebSocket.CONNECTING)) {
+      return;
+    }
+    const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const wsUrl = `${protocol}//${location.host}/ws/live`;
+
+    try {
+      liveWs = new WebSocket(wsUrl);
+
+      liveWs.onopen = () => {
+        updateLiveBadge(true, '实时同步中');
+        scheduleStateRefresh(); // 补齐初次连接或断线期间漏掉的通知。
+        if (liveReconnectTimer) {
+          clearTimeout(liveReconnectTimer);
+          liveReconnectTimer = null;
+        }
+        // 心跳保活 (每 15 秒 ping 一次)
+        if (livePingTimer) clearInterval(livePingTimer);
+        livePingTimer = setInterval(() => {
+          if (liveWs && liveWs.readyState === WebSocket.OPEN) {
+            liveWs.send('ping');
+          }
+        }, 15000);
+      };
+
+      liveWs.onmessage = (evt) => {
+        try {
+          const data = JSON.parse(evt.data);
+          if (!eventMatchesContext(data)) return;
+          if (data.type === 'graph-changed') {
+            scheduleGraphRefresh();
+          } else if (data.type === 'status-changed') {
+            scheduleStateRefresh();
+          }
+        } catch (e) {
+          // 忽略非 json 或 pong
+        }
+      };
+
+      liveWs.onclose = () => {
+        updateLiveBadge(false, '连接已断开');
+        if (livePingTimer) clearInterval(livePingTimer);
+        // 自动重连 (2.5 秒后)
+        if (!liveReconnectTimer) {
+          liveReconnectTimer = setTimeout(() => {
+            liveReconnectTimer = null;
+            initLiveWebSocket();
+          }, 2500);
+        }
+      };
+
+      liveWs.onerror = () => {
+        updateLiveBadge(false, '重连中...');
+        try { liveWs.close(); } catch (e) {}
+      };
+    } catch (err) {
+      updateLiveBadge(false, '通道异常');
+      if (!liveReconnectTimer) {
+        liveReconnectTimer = setTimeout(() => {
+          liveReconnectTimer = null;
+          initLiveWebSocket();
+        }, 3000);
+      }
+    }
   }
 
   // ==========================================
   // 1. 初始化与项目加载
   // ==========================================
   async function init() {
-    setupEventListeners();
-    await fetchAvailableSkills();
-    await loadProjects();
+    try {
+      setupEventListeners();
+      const health = await requestJson('/api/health');
+      if (!Object.prototype.hasOwnProperty.call(health, 'bound_project')) {
+        throw new Error('服务未返回工作台绑定信息，请升级或重启服务');
+      }
+      if (health.bound_project !== null) {
+        if (health.studio_protocol !== 1 || !health.project_path || !health.workflow || !health.bound_project) {
+          throw new Error('绑定服务身份或协议不完整');
+        }
+        boundContext = health;
+        currentProject = health.bound_project;
+        currentWorkflow = health.workflow;
+        currentChapter = health.chapter;
+        document.body.classList.add('studio-bound');
+        document.getElementById('boundStudioNotice').classList.remove('hidden');
+        document.getElementById('boundModelNote').classList.remove('hidden');
+        document.getElementById('boundStudioContext').textContent = `${health.bound_project} · ${health.workflow} · 章节 ${health.chapter} · ${health.project_path}`;
+        [projectSelect, workflowSelect, chapterInput, btnPrevChapter, btnNextChapter,
+          btnOpenNewProjectModal, btnOpenAddPathModal, btnDispatchHost, btnCopyPrompt,
+          btnReconcile, selectNodeModel, fieldModel].forEach(el => { el.disabled = true; });
+        const launchParams = new URLSearchParams(location.search);
+        const launchId = launchParams.get('launch_id');
+        if (launchParams.has('launch_id') && !launchId) throw new Error('工作台会话标识为空');
+        uiSession = launchId
+          ? await requestJson(`/api/ui/session/${encodeURIComponent(launchId)}`)
+          : await requestJson('/api/ui/session', { method: 'POST' });
+        if (!uiSession.launch_id || (launchId && uiSession.launch_id !== launchId) ||
+            uiSession.project !== currentProject || uiSession.project_path !== health.project_path ||
+            uiSession.workflow !== currentWorkflow || uiSession.chapter !== health.chapter ||
+            !['pending', 'ready'].includes(uiSession.status)) {
+          throw new Error('本次工作台会话与服务上下文不匹配，请从主对话重新打开');
+        }
+      } else if (new URLSearchParams(location.search).has('launch_id')) {
+        throw new Error('就绪会话需要单项目绑定服务，当前入口未绑定');
+      }
+      await fetchAvailableSkills();
+      if (boundContext) await loadGraph(currentProject);
+      else await loadProjects();
+      await waitForGraphPaint();
+      if (boundContext) {
+        const ready = await requestJson('/api/ui/ready', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ launch_id: uiSession.launch_id, revision: graphRevision })
+        });
+        if (ready.status !== 'ready') throw new Error('服务尚未确认本次渲染就绪');
+      }
+      uiReady = true;
+      const layout = document.querySelector('.studio-layout');
+      layout.inert = false;
+      layout.removeAttribute('inert');
+      layout.setAttribute('aria-busy', 'false');
+      document.body.classList.remove('studio-loading');
+      document.getElementById('studioLoadingOverlay').classList.add('hidden');
+      initLiveWebSocket();
+    } catch (error) {
+      const overlay = document.getElementById('studioLoadingOverlay');
+      overlay.classList.add('has-error');
+      document.getElementById('studioLoadingTitle').textContent = '工作台尚未就绪';
+      document.getElementById('studioLoadingMessage').textContent = `${error.message}。请刷新重试；会话失效时请从主对话重新打开。`;
+      appendLog(`[error] 初始化失败：${error.message}`);
+    }
+  }
+
+  async function waitForGraphPaint() {
+    await new Promise(resolve => {
+      // 后台标签页浏览器会暂停 rAF；退化为短宏任务，否则就绪回执永不发出。
+      const fallback = setTimeout(() => { clearTimeout(fallback); resolve(); }, 120);
+      requestAnimationFrame(() => requestAnimationFrame(() => { clearTimeout(fallback); resolve(); }));
+    });
+    if (!currentGraph) {
+      if (boundContext) throw new Error('没有可绘制的工作流');
+      return; // 旧入口允许空项目列表。
+    }
+    const ids = Object.keys(currentGraph.nodes);
+    const expectedEdges = ids.reduce((count, id) => count + (currentGraph.nodes[id].after || []).length, 0);
+    const cards = nodesLayer.querySelectorAll('.node-card');
+    const paths = edgesGroup.querySelectorAll('.edge-path');
+    if (cards.length !== ids.length || paths.length !== expectedEdges ||
+        Array.from(cards).some(card => !card.offsetWidth || !card.offsetHeight) ||
+        Array.from(paths).some(path => !path.getAttribute('d') || /NaN|Infinity/.test(path.getAttribute('d')))) {
+      throw new Error('节点或连线未完成绘制');
+    }
   }
 
   async function fetchAvailableSkills() {
-    try {
-      const res = await fetch('/api/skills');
-      const data = await res.json();
-      availableSkills = data.skills || [];
-      populateAvailableSkillsDropdown();
-    } catch (e) {
-      console.error('Failed to load skills:', e);
-    }
+    const data = await requestJson('/api/skills');
+    if (!Array.isArray(data.skills)) throw new Error('技能库响应格式错误');
+    availableSkills = data.skills;
+    populateAvailableSkillsDropdown();
   }
 
   function populateAvailableSkillsDropdown() {
@@ -259,10 +694,51 @@
     appendLog(`[studio] 🗑️ 节点 [${selectedNodeId}] 移除技能: ${skillId}`);
   }
 
-  async function loadProjects() {
+  async function loadWorkflows(projectSlug) {
+    if (!workflowSelect || !projectSlug) return;
     try {
-      const res = await fetch('/api/projects');
-      const data = await res.json();
+      const data = await requestJson(`/api/workflows?project=${encodeURIComponent(projectSlug)}`);
+      if (data.workflows && data.workflows.length > 0) {
+        workflowSelect.innerHTML = '';
+        data.workflows.forEach(wf => {
+          const opt = document.createElement('option');
+          opt.value = wf.id;
+          opt.textContent = `${wf.icon || '⚙️'} ${wf.name}`;
+          opt.title = wf.desc || '';
+          workflowSelect.appendChild(opt);
+        });
+
+        const savedWf = localStorage.getItem(`studio_wf_${projectSlug}`);
+        if (savedWf && data.workflows.some(w => w.id === savedWf)) {
+          currentWorkflow = savedWf;
+        } else if (!data.workflows.some(w => w.id === currentWorkflow)) {
+          currentWorkflow = data.workflows[0].id;
+        }
+        workflowSelect.value = currentWorkflow;
+      }
+    } catch (e) {
+      throw new Error(`工作流列表加载失败：${e.message}`);
+    }
+    updateChapterSelectorUI();
+  }
+
+  function updateChapterSelectorUI() {
+    const isVolume = currentWorkflow.includes('volume');
+    if (chapterSelectorLabel) {
+      chapterSelectorLabel.textContent = isVolume ? '目标卷号：' : '目标章节：';
+    }
+    if (chapterUnitPrefix) {
+      chapterUnitPrefix.textContent = '第';
+    }
+    if (chapterUnitSuffix) {
+      chapterUnitSuffix.textContent = isVolume ? '卷' : '章';
+    }
+  }
+
+  async function loadProjects() {
+    if (boundContext) return;
+    try {
+      const data = await requestJson('/api/projects');
       projectSelect.innerHTML = '';
 
       if (!data.projects || data.projects.length === 0) {
@@ -277,51 +753,90 @@
         projectSelect.appendChild(opt);
       });
 
-      if (!currentProject || !data.projects.some(p => p.slug === currentProject)) {
+      const savedProject = localStorage.getItem('studio_selected_project');
+      if (savedProject && data.projects.some(p => p.slug === savedProject)) {
+        currentProject = savedProject;
+      } else if (!currentProject || !data.projects.some(p => p.slug === currentProject)) {
         currentProject = data.projects[0].slug;
       }
       projectSelect.value = currentProject;
+      await loadWorkflows(currentProject);
       await loadGraph(currentProject);
     } catch (err) {
-      appendLog(`[error] 加载课题列表失败: ${err.message}`);
+      throw new Error(`加载课题列表失败：${err.message}`);
     }
   }
 
-  async function loadGraph(projectSlug, targetChapter = null) {
-    if (!projectSlug) return;
-    if (targetChapter !== null && !isNaN(targetChapter)) {
-      currentChapter = parseInt(targetChapter, 10);
+  async function loadGraph(projectSlug, targetChapter = null, silent = false, force = false) {
+    if (!projectSlug) return false;
+    if (boundContext && (projectSlug !== boundContext.bound_project || targetChapter !== null)) return false;
+    if (silent && graphRefreshBlocked()) { deferGraphRefresh(); return false; }
+    const loadVersion = ++graphLoadVersion;
+    const editAtStart = editVersion;
+    const requestedChapter = targetChapter === null ? explicitChapter : parseInt(targetChapter, 10);
+    const query = contextQuery(requestedChapter);
+    const data = await requestJson(`/api/graph?${query}`);
+    if (loadVersion !== graphLoadVersion || projectSlug !== currentProject) return false;
+    // 请求期间开始输入或拖拽，同样不能用迟到的响应覆盖编辑。
+    if (uiReady && (editAtStart !== editVersion || pendingSaves || (silent && graphRefreshBlocked()))) {
+      deferGraphRefresh();
+      return false;
     }
+    if (!data.hasGraph || !data.graph) {
+      if (boundContext) throw new Error(`工作流 ${currentWorkflow} 不存在或不可读取`);
+      data.graph = { version: 1, name: projectSlug, nodes: {} };
+    }
+    if (!data.graph.nodes || typeof data.graph.nodes !== 'object' || Array.isArray(data.graph.nodes)) {
+      throw new Error('工作流节点结构无效');
+    }
+    if (boundContext && (!data.revision || !data.state)) throw new Error('工作流版本或状态缺失');
+    if (silent && !force && data.revision === graphRevision && currentGraph) {
+      applyStateUpdate(data);
+      if (!pendingGraphRefresh) document.getElementById('studioSyncNotice').classList.add('hidden');
+      return true;
+    }
+    currentGraph = data.graph;
+    graphRevision = data.revision || null;
+    explicitChapter = requestedChapter;
+    currentState = data.state || null;
+    if (data.host !== undefined) { detectedHost = data.host || null; updateHostBadge(); }
+    const isVolume = currentWorkflow.includes('volume');
+    currentChapter = boundContext ? boundContext.chapter :
+      (isVolume ? data.currentVolume : data.currentChapter) ?? requestedChapter ?? currentChapter;
+    chapterInput.value = currentChapter;
+    updateChapterSelectorUI();
+    graphDirty = false;
+    inspectorDirty = false;
+    saveConflict = false;
+    const posKey = `${projectRequestValue()}::${currentWorkflow}`;
+    nodePositions = workflowPositions[posKey] || (workflowPositions[posKey] = {});
+    if (Object.keys(currentGraph.nodes).some(id => !nodePositions[id])) autoComputeLayout();
+    renderGraph();
+    if (selectedNodeId && currentGraph.nodes[selectedNodeId]) selectNode(selectedNodeId, true);
+    else { selectedNodeId = null; inspectorDrawer.classList.remove('open'); }
+    if (!pendingGraphRefresh) document.getElementById('studioSyncNotice').classList.add('hidden');
+    return true;
+  }
+
+  async function refreshGraphExplicitly() {
+    if (pendingSaves) { showSyncNotice('正在保存配置，请等待保存结束后再刷新。'); return; }
+    if (hasUnsavedChanges() && !confirm('重新载入将丢弃未保存的节点配置和文件编辑。确定从磁盘重新载入吗？')) return;
+    const original = btnRefreshStatus.innerHTML;
+    btnRefreshStatus.disabled = true;
+    btnRefreshStatus.textContent = '正在刷新...';
     try {
-      appendLog(`[studio] 正在加载小说项目 [${projectSlug}] 第 ${currentChapter} 章拓扑与状态...`);
-      const res = await fetch(`/api/graph?project=${encodeURIComponent(projectSlug)}&chapter=${currentChapter}`);
-      const data = await res.json();
-
-      if (!data.hasGraph || !data.graph) {
-        appendLog(`[warn] 该项目尚未配置 graph.yaml`);
-        nodesLayer.innerHTML = '<div style="padding:40px;color:#94a3b8;">该项目尚未创建 graph.yaml，请添加节点并保存。</div>';
-        edgesGroup.innerHTML = '';
-        currentGraph = { version: 1, name: projectSlug, nodes: {} };
-        currentState = null;
-        return;
+      pendingGraphRefresh = false;
+      if (await loadGraph(currentProject, null, false, true)) {
+        if (readerDirty) {
+          readerDirty = false;
+          currentReadingFile = '';
+          readerLoadVersion++;
+          readerModal.classList.add('hidden');
+        }
+        showToast('已从磁盘重新载入配置与状态', 'info');
       }
-
-      currentGraph = data.graph;
-      currentState = data.state;
-      if (data.currentChapter !== undefined) {
-        currentChapter = data.currentChapter;
-      }
-      if (chapterInput) chapterInput.value = currentChapter;
-
-      // 自动计算初始拓扑位置
-      autoComputeLayout();
-      renderGraph();
-      if (selectedNodeId && currentGraph.nodes[selectedNodeId]) {
-        selectNode(selectedNodeId);
-      }
-    } catch (err) {
-      appendLog(`[error] 加载节点图失败: ${err.message}`);
-    }
+    } catch (error) { reportSyncError(error); }
+    finally { btnRefreshStatus.innerHTML = original; btnRefreshStatus.disabled = false; }
   }
 
   // ==========================================
@@ -385,7 +900,9 @@
       const node = nodes[id];
       const pos = nodePositions[id] || { x: 100, y: 100 };
       const stateEntry = (currentState && currentState.nodes) ? currentState.nodes[id] : null;
-      const status = stateEntry ? stateEntry.status : 'stale';
+      const rawStatus = stateEntry ? stateEntry.status : 'stale';
+      const isRunning = (rawStatus === 'running') || (stateEntry && stateEntry.running);
+      const status = isRunning ? 'running' : rawStatus;
 
       const card = document.createElement('div');
       card.className = `node-card status-${status} ${selectedNodeId === id ? 'selected' : ''}`;
@@ -394,14 +911,21 @@
 
       const roleText = node.role || (node.kind === 'command' ? '命令行工具' : '人工检查点');
       const promptBrief = node.prompt || node.ask || (node.run ? node.run.join(' ') : '无指令说明');
-      const modelBadgeHtml = (node.kind === 'agent' && node.model)
-        ? `<div class="node-model-row"><span class="node-model-chip ${getModelClass(node.model)}" title="执行模型: ${escapeHtml(node.model)}">${formatModelShort(node.model)}</span></div>`
+      const resolvedModel = getResolvedModel(id, node);
+      const stateEntryForModel = getStateEntry(id);
+      const modelSwapped = node.kind === 'agent' && node.model && resolvedModel && node.model !== resolvedModel;
+      const originNote = (stateEntryForModel && stateEntryForModel.model_note) ? stateEntryForModel.model_note : '';
+      const modelBadgeHtml = (node.kind === 'agent' && resolvedModel)
+        ? `<div class="node-model-row"><span class="node-model-chip ${getModelClass(resolvedModel)}" title="执行模型: ${escapeHtml(resolvedModel)}">${formatModelShort(resolvedModel)}</span>${modelSwapped ? `<span class="node-model-swap" title="${escapeHtml(originNote || `图谱声明的 ${node.model} 已按当前宿主（${hostDisplayName()}）模型档案自动适配为 ${resolvedModel}`)}">已自动适配</span>` : ''}</div>`
+        : '';
+      const runningBadgeHtml = isRunning
+        ? `<div class="node-running-badge"><span class="running-dot-pulse"></span><span>正在由智能体执行中...</span></div>`
         : '';
 
       card.innerHTML = `
         <div class="node-header">
           <div class="node-title-group">
-            <span class="status-indicator ${status}"></span>
+            <span class="status-indicator ${status}" title="节点状态: ${status}"></span>
             <span class="node-title" title="${id}">${id}</span>
           </div>
           <span class="kind-badge kind-badge-${node.kind}">${node.kind}</span>
@@ -409,6 +933,7 @@
         <div class="node-body">
           <div class="node-role">${escapeHtml(roleText)}</div>
           ${modelBadgeHtml}
+          ${runningBadgeHtml}
           <div class="node-brief">${escapeHtml(promptBrief)}</div>
         </div>
         <div class="node-ports">
@@ -421,10 +946,12 @@
       card.addEventListener('mousedown', (e) => {
         if (e.target.classList.contains('port')) return;
         if (connectingFromId) return;
-        selectNode(id);
+        if (!selectNode(id)) return;
         draggingNodeId = id;
-        dragOffsetX = (e.clientX - panX) / zoom - pos.x;
-        dragOffsetY = (e.clientY - panY) / zoom - pos.y;
+        const rect = canvasViewport.getBoundingClientRect();
+        const currentPos = nodePositions[id] || pos;
+        dragOffsetX = (e.clientX - rect.left - panX) / zoom - currentPos.x;
+        dragOffsetY = (e.clientY - rect.top - panY) / zoom - currentPos.y;
         e.stopPropagation();
       });
 
@@ -432,22 +959,24 @@
       const portOut = card.querySelector('.port-out');
       portOut.addEventListener('mousedown', (e) => {
         e.stopPropagation();
-        e.preventDefault();
-        startConnectFrom(id, true);
-      });
-      portOut.addEventListener('click', (e) => {
-        e.stopPropagation();
-        if (!connectingFromId) {
-          startConnectFrom(id, false);
+        if (connectingFromId === id) {
+          cancelConnect();
+          return;
         }
+        startConnectFrom(id);
+        connectStartMousePos = { x: e.clientX, y: e.clientY };
+        isDragConnecting = false;
       });
 
-      // 左侧输入端口事件：点击完成连线
+      // 左侧输入端口事件：点击完成连线或提供引导
       const portIn = card.querySelector('.port-in');
       portIn.addEventListener('click', (e) => {
         e.stopPropagation();
         if (connectingFromId && connectingFromId !== id) {
           completeConnectTo(id);
+        } else if (!connectingFromId) {
+          appendLog(`[studio] 💡 提示：连线方向为 [上游输出 (蓝色)] ➔ [下游输入 (绿色)]。请先点击上游节点的右侧蓝色端口。`);
+          selectNode(id);
         }
       });
 
@@ -498,14 +1027,17 @@
         const d = `M ${x1} ${y1} C ${x1 + dx} ${y1}, ${x2 - dx} ${y2}, ${x2} ${y2}`;
 
         const g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
-        g.className = 'edge-item';
+        g.setAttribute('class', 'edge-item');
 
         const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
         path.setAttribute('d', d);
         path.setAttribute('class', 'edge-path');
 
         const stateTarget = (currentState && currentState.nodes) ? currentState.nodes[targetId] : null;
-        if (stateTarget && stateTarget.status === 'current') {
+        if (nodeStatus(targetId) === 'running') {
+          path.classList.add('edge-active');
+          path.setAttribute('marker-end', 'url(#arrow-active)');
+        } else if (stateTarget && stateTarget.status === 'current') {
           path.classList.add('edge-current');
           path.setAttribute('marker-end', 'url(#arrow-current)');
         } else if (stateTarget && stateTarget.status === 'stale') {
@@ -547,13 +1079,13 @@
   // ==========================================
   // 4. 连线与剪线逻辑
   // ==========================================
-  function startConnectFrom(nodeId, isDrag = false) {
+  function startConnectFrom(nodeId) {
     connectingFromId = nodeId;
-    isDraggingConnect = isDrag;
+    isDragConnecting = false;
     tempEdgeStartPos = getNodeCenterPort(nodeId, true);
     document.body.classList.add('is-connecting');
     connectTipBar.classList.remove('hidden');
-    appendLog(`[studio] 🔗 连线起点已锁定: [${nodeId}]，按住拖拽至目标节点释放或直接点击目标节点完成连接（按 ESC 取消）。`);
+    appendLog(`[studio] 🔗 连线起点已锁定: [${nodeId}]。可按住拖拽至目标节点释放，或移动鼠标点击目标节点（按 ESC 或点击空白处取消）。`);
   }
 
   function updateTempEdge(targetX, targetY) {
@@ -567,6 +1099,17 @@
     tempEdge.setAttribute('d', d);
   }
 
+  function isReachable(fromId, toId, visited = new Set()) {
+    if (fromId === toId) return true;
+    if (visited.has(fromId)) return false;
+    visited.add(fromId);
+    const after = (currentGraph && currentGraph.nodes && currentGraph.nodes[fromId]?.after) || [];
+    for (const dep of after) {
+      if (isReachable(dep, toId, visited)) return true;
+    }
+    return false;
+  }
+
   function completeConnectTo(targetId) {
     if (!connectingFromId || connectingFromId === targetId) {
       cancelConnect();
@@ -574,6 +1117,13 @@
     }
     const targetNode = currentGraph.nodes[targetId];
     if (!targetNode) {
+      cancelConnect();
+      return;
+    }
+
+    // 环依赖检查：如果 targetId 已经在 connectingFromId 的上游链条中，则建立依赖会导致死锁
+    if (isReachable(connectingFromId, targetId)) {
+      alert(`⚠️ 无法建立依赖: [${connectingFromId}] ➔ [${targetId}] 会导致循环依赖 (Cycle)！\n因为 [${connectingFromId}] 已经是 [${targetId}] 的下游节点。`);
       cancelConnect();
       return;
     }
@@ -589,16 +1139,18 @@
 
     cancelConnect();
     renderEdges();
-    if (selectedNodeId === targetId) selectNode(targetId);
+    if (selectedNodeId === targetId) renderAfterCheckboxes(targetId, targetNode.after);
   }
 
   function cancelConnect() {
     connectingFromId = null;
-    isDraggingConnect = false;
+    isDragConnecting = false;
+    connectStartMousePos = null;
     document.body.classList.remove('is-connecting');
     connectTipBar.classList.add('hidden');
     tempEdge.setAttribute('d', '');
     document.querySelectorAll('.node-card').forEach(c => c.classList.remove('connect-target-candidate'));
+    if (pendingGraphRefresh) scheduleGraphRefresh();
   }
 
   function disconnectNodes(sourceId, targetId) {
@@ -607,14 +1159,16 @@
     targetNode.after = targetNode.after.filter(x => x !== sourceId);
     appendLog(`[studio] ✂️ 已剪断依赖: [${sourceId}] ➔ [${targetId}]`);
     renderEdges();
-    if (selectedNodeId === targetId) selectNode(targetId);
+    if (selectedNodeId === targetId) renderAfterCheckboxes(targetId, targetNode.after);
     saveGraphToServer();
   }
 
   // ==========================================
   // 5. 属性检查器 Inspector
   // ==========================================
-  function selectNode(id) {
+  function selectNode(id, refill = false) {
+    if (!refill && selectedNodeId === id) return true;
+    if (!refill && !confirmInspectorDiscard()) return false;
     selectedNodeId = id;
     document.querySelectorAll('.node-card').forEach(c => c.classList.remove('selected'));
     const el = document.getElementById(`node-${id}`);
@@ -628,10 +1182,12 @@
     inspectorKindBadge.className = `kind-badge kind-badge-${node.kind}`;
 
     const stateEntry = (currentState && currentState.nodes) ? currentState.nodes[id] : null;
-    const status = stateEntry ? stateEntry.status : 'stale';
-    inspectorStatusPill.textContent = status;
+    const rawStatus = stateEntry ? stateEntry.status : 'stale';
+    const isRunning = (rawStatus === 'running') || (stateEntry && stateEntry.running);
+    const status = isRunning ? 'running' : rawStatus;
+    inspectorStatusPill.textContent = isRunning ? '⚡ 正在运行中...' : status;
     inspectorStatusPill.className = `status-pill status-${status}`;
-    inspectorStatusReason.textContent = (stateEntry && stateEntry.staleBecause) ? stateEntry.staleBecause : '';
+    inspectorStatusReason.textContent = (stateEntry && stateEntry.staleBecause) ? stateEntry.staleBecause : (isRunning ? '智能体任务正在活跃生产中...' : '');
 
     // 依赖多选渲染
     renderAfterCheckboxes(id, node.after || []);
@@ -642,16 +1198,12 @@
     sectionHumanFields.classList.toggle('hidden', node.kind !== 'human');
 
     if (node.kind === 'agent') {
-      const currentModel = node.model || 'gemini-3.8-flash-high';
-      const knownModels = [
-        'gemini-3.8-flash-high',
-        'gemini-3.8-flash-medium',
-        'gemini-3.8-flash-low',
-        'claude-opus-4.6-thinking',
-        'claude-3.7-sonnet-thinking'
-      ];
+      const stateEntry = getStateEntry(id);
+      const resolvedModel = (stateEntry && stateEntry.model) ? stateEntry.model : null;
+      const currentModel = node.model || '';
+      const knownModels = Array.from(selectNodeModel.options, option => option.value);
       if (selectNodeModel) {
-        if (knownModels.includes(currentModel)) {
+        if (currentModel && knownModels.includes(currentModel)) {
           selectNodeModel.value = currentModel;
           if (fieldModel) {
             fieldModel.value = currentModel;
@@ -665,11 +1217,27 @@
           }
         }
       }
+      // 宿主适配提示行：展示状态文件解析出的实际执行模型（只读，不写回图谱）
+      const adaptEl = document.getElementById('inspectorModelAdapt');
+      if (adaptEl) {
+        if (resolvedModel) {
+          const swapped = currentModel && resolvedModel !== currentModel;
+          const note = (stateEntry && stateEntry.model_note) ? stateEntry.model_note : '';
+          adaptEl.innerHTML =
+            `<span class="node-model-chip ${getModelClass(resolvedModel)}">${formatModelShort(resolvedModel)}</span>` +
+            (swapped ? `<span class="node-model-swap">宿主已自动适配</span>` : '') +
+            (note ? `<span class="model-adapt-note">${escapeHtml(note)}</span>` : '');
+          adaptEl.classList.remove('hidden');
+        } else {
+          adaptEl.classList.add('hidden');
+          adaptEl.innerHTML = '';
+        }
+      }
       fieldRole.value = node.role || '';
       fieldPrompt.value = node.prompt || '';
       fieldSkills.value = (node.skills || []).join(', ');
       renderNodeSkills(node.skills || []);
-      btnDispatchHost.textContent = '🚀 在 Antigravity 中执行';
+      btnDispatchHost.textContent = `🚀 在 ${hostDisplayName()} 中执行`;
     } else if (node.kind === 'command') {
       fieldRun.value = (node.run || []).join(' ');
       btnDispatchHost.textContent = '▶ 执行命令行脚本';
@@ -688,6 +1256,7 @@
     fieldAssertScoreField.value = asserts.score_field || 'overall';
 
     inspectorDrawer.classList.add('open');
+    return true;
   }
 
   function renderAfterCheckboxes(currentNodeId, currentAfter) {
@@ -718,7 +1287,7 @@
     });
   }
 
-  function saveCurrentNodeFromInspector() {
+  function saveCurrentNodeFromInspector(triggerBtn = null) {
     if (!selectedNodeId || !currentGraph.nodes[selectedNodeId]) return;
     const node = currentGraph.nodes[selectedNodeId];
 
@@ -729,7 +1298,7 @@
       node.role = fieldRole.value.trim();
       node.prompt = fieldPrompt.value;
       node.skills = fieldSkills.value.split(',').map(s => s.trim()).filter(Boolean);
-      if (selectNodeModel) {
+      if (selectNodeModel && !boundContext) {
         node.model = (selectNodeModel.value === 'custom' && fieldModel)
           ? fieldModel.value.trim()
           : selectNodeModel.value;
@@ -752,8 +1321,9 @@
       delete node.assert;
     }
 
+    inspectorDirty = false; // 草稿已并入 currentGraph；保存失败时由 graphDirty 继续保护。
     renderGraph();
-    saveGraphToServer();
+    return saveGraphToServer(triggerBtn, `节点 [${selectedNodeId}] 属性已保存至 ${currentWorkflow}`);
   }
 
   function deleteSelectedNode() {
@@ -771,48 +1341,74 @@
     });
 
     inspectorDrawer.classList.remove('open');
+    inspectorDirty = false;
     selectedNodeId = null;
     renderGraph();
-    saveGraphToServer();
+    saveGraphToServer(null, `🗑️ 节点 [${id}] 已删除并更新至磁盘`);
     appendLog(`[studio] 🗑️ 节点 [${id}] 已删除。`);
   }
 
   // ==========================================
   // 6. 保存与后端交互
   // ==========================================
-  async function saveGraphToServer() {
-    if (!currentProject || !currentGraph) return;
-    try {
-      appendLog(`[studio] 正在保存配置至 graph.yaml 并重算状态...`);
-      const res = await fetch('/api/graph/save', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ project: currentProject, graph: currentGraph })
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.detail || '保存失败');
-
-      currentState = data.state;
-      renderGraph();
-      if (selectedNodeId) selectNode(selectedNodeId);
-      appendLog(`[studio] ✅ graph.yaml 保存成功，依赖哈希与状态已刷新。`);
-    } catch (err) {
-      appendLog(`[error] 保存异常: ${err.message}`);
-      alert(`保存失败: ${err.message}`);
-    }
+  function saveGraphToServer(triggerBtn = null, successMsg = null) {
+    if (!uiReady || !currentProject || !currentGraph) return Promise.resolve(false);
+    graphDirty = true;
+    const version = ++editVersion;
+    persistedEditVersion = version;
+    const snapshot = JSON.parse(JSON.stringify(currentGraph));
+    const project = projectRequestValue();
+    const workflow = currentWorkflow;
+    const original = triggerBtn?.innerHTML;
+    if (triggerBtn) { triggerBtn.disabled = true; triggerBtn.textContent = '正在保存...'; }
+    pendingSaves++;
+    // 串行写入：后一笔使用前一笔返回的 revision，不会因快速编辑制造自身冲突。
+    saveQueue = saveQueue.then(async () => {
+      try {
+        if (saveConflict) throw new Error('磁盘版本已改变，请保留草稿或确认重新载入后再编辑');
+        const data = await requestJson('/api/graph/save', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ project, workflow, graph: snapshot, revision: graphRevision })
+        });
+        if (!data.success || !data.revision) throw new Error('保存响应缺少成功标记或版本，请刷新核对磁盘');
+        graphRevision = data.revision;
+        if (persistedEditVersion === version) graphDirty = false;
+        applyStateUpdate(data);
+        appendLog(`[studio] ${workflow} 已保存，版本已更新。`);
+        showToast(successMsg || `配置已保存至 ${workflow}`);
+        return true;
+      } catch (error) {
+        graphDirty = true;
+        if (error.status === 409) {
+          saveConflict = true;
+          showSyncNotice('保存冲突：宿主已修改工作流，当前草稿未被覆盖。请先复制保留需要的内容，再点击重新载入并确认丢弃。', true);
+        } else reportSyncError(error);
+        showToast(`保存失败：${error.message}`, 'error', 5000);
+        return false;
+      } finally {
+        pendingSaves--;
+        if (triggerBtn) { triggerBtn.innerHTML = original; triggerBtn.disabled = false; }
+        if (pendingGraphRefresh) scheduleGraphRefresh();
+      }
+    });
+    return saveQueue;
   }
 
   // ==========================================
   // 7. 任务执行与 Antigravity 派发
   // ==========================================
   async function runNode(nodeId, action = 'run_node') {
+    if (!uiReady || boundContext) {
+      showToast('请回主对话等待 supervisor 询问并明确确认执行。', 'info');
+      return;
+    }
     try {
-      appendLog(`[studio] 触发执行任务: action=${action}, nodeId=${nodeId || 'all'}...`);
+      appendLog(`[studio] 触发执行任务: action=${action}, nodeId=${nodeId || 'all'}, workflow=${currentWorkflow}...`);
       openTerminal();
 
       if (nodeId && currentState && currentState.nodes && currentState.nodes[nodeId]) {
         currentState.nodes[nodeId].status = 'running';
-        renderGraph();
+        applyStateUpdate({ state: currentState });
       }
 
       const res = await fetch('/api/node/run', {
@@ -822,7 +1418,8 @@
           project: currentProject,
           node_id: nodeId,
           action: action,
-          chapter: currentChapter
+          chapter: currentChapter,
+          workflow: currentWorkflow
         })
       });
 
@@ -848,7 +1445,7 @@
           appendLog(`[studio] 🏁 任务结束，状态: ${payload.status}`);
           activeEventSource.close();
           activeEventSource = null;
-          setTimeout(() => { loadGraph(currentProject); }, 500);
+          scheduleStateRefresh();
         }
       } catch {
         appendLog(event.data);
@@ -865,7 +1462,7 @@
   }
 
   function copyAgentRunPrompt() {
-    if (!selectedNodeId || !currentGraph.nodes[selectedNodeId]) return;
+    if (!uiReady || boundContext || !selectedNodeId || !currentGraph.nodes[selectedNodeId]) return;
     const node = currentGraph.nodes[selectedNodeId];
     const skillList = node.skills || [];
     const skillDescriptions = skillList.map(sid => {
@@ -880,6 +1477,13 @@
       `- 输入文件契约：${(node.inputs || []).join(', ') || '无'}`,
       `- 产出文件契约：${(node.outputs || []).join(', ') || '无'}`,
     ];
+    const stateEntry = getStateEntry(selectedNodeId);
+    if (stateEntry && stateEntry.model) {
+      lines.push(`- 执行模型（宿主 ${hostDisplayName()} 自动适配）：${stateEntry.model}`);
+      if (stateEntry.model_note) {
+        lines.push(`- ⚠ 模型适配说明：${stateEntry.model_note}`);
+      }
+    }
     if (node.assert) {
       lines.push(`- 质量硬断言要求：${JSON.stringify(node.assert)}`);
     }
@@ -888,7 +1492,7 @@
 
     const promptText = lines.join('\n');
     navigator.clipboard.writeText(promptText).then(() => {
-      alert('已成功复制 Agent 任务指令卡到剪贴板！可直接粘贴给宿主 Agent (Antigravity) 执行。');
+      alert(`已成功复制 Agent 任务指令卡到剪贴板！可直接粘贴给宿主 Agent (${hostDisplayName()}) 执行。`);
     }).catch(() => {
       prompt('请手动复制任务指令：', promptText);
     });
@@ -907,22 +1511,36 @@
   // ==========================================
   async function openReaderModal() {
     readerModal.classList.remove('hidden');
+    if (currentReadingFile) return; // 再打开保留文件编辑，不重填草稿。
     readerFileList.innerHTML = '';
     readerTextarea.value = '请在左侧选择要审阅的产物文件...';
 
     const pad = String(currentChapter).padStart(2, '0');
-    // 优先收录当前章节工作区核心演进文稿与模块化设定
-    const filesSet = new Set([
-      `工作区/第${pad}章/03_去AI味润色稿.md`,
-      `工作区/第${pad}章/04_盲审质检报告.md`,
-      `工作区/第${pad}章/02_正文初稿.md`,
-      `工作区/第${pad}章/01_状态上下文.md`,
-      '设定/世界观/01_法则与力量体系.md',
-      '设定/人物/01_主要人物小传.md',
-      '设定/人物/02_人际关系矩阵.md',
-      '设定/大纲/02_分卷细纲_第一卷.md',
-      '资产/voice_sample.md'
-    ]);
+    // 优先收录当前章节或分卷工作区核心演进文稿与模块化设定
+    const filesSet = new Set();
+    if (currentWorkflow.includes('volume')) {
+      filesSet.add(`工作区/分卷策划/第${pad}卷_01_立意与核心命题.md`);
+      filesSet.add(`工作区/分卷策划/第${pad}卷_02_副本物理与生存法则.md`);
+      filesSet.add(`工作区/分卷策划/第${pad}卷_03_势力暗算盘与博弈矩阵.md`);
+      filesSet.add(`工作区/分卷策划/第${pad}卷_04_四阶认知反转链.md`);
+      filesSet.add(`工作区/分卷策划/第${pad}卷_05_逐章细纲矩阵.md`);
+      filesSet.add(`工作区/分卷策划/第${pad}卷_06_伏笔生命周期总账.md`);
+      filesSet.add('设定/大纲/01_全书宏观设定.md');
+      filesSet.add('设定/世界观/01_法则与力量体系.md');
+    } else {
+      filesSet.add(`工作区/第${pad}章/03_去AI味润色稿.md`);
+      filesSet.add(`工作区/第${pad}章/03_3_朱雀检测报告.md`);
+      filesSet.add(`工作区/第${pad}章/04_盲审质检报告.md`);
+      filesSet.add(`工作区/第${pad}章/03_5_人设审查报告.md`);
+      filesSet.add(`工作区/第${pad}章/02_正文初稿.md`);
+      filesSet.add(`工作区/第${pad}章/01_5_分场节拍表.md`);
+      filesSet.add(`工作区/第${pad}章/01_状态上下文.md`);
+      filesSet.add('设定/世界观/01_法则与力量体系.md');
+      filesSet.add('设定/人物/01_主要人物小传.md');
+      filesSet.add('设定/人物/02_人际关系矩阵.md');
+      filesSet.add('设定/大纲/02_分卷细纲_第一卷.md');
+      filesSet.add('资产/voice_sample.md');
+    }
 
     if (currentGraph && currentGraph.nodes) {
       Object.values(currentGraph.nodes).forEach(n => {
@@ -944,24 +1562,30 @@
   }
 
   async function loadFileContent(filename) {
-    currentReadingFile = filename;
-    readerFileName.textContent = filename;
-    document.querySelectorAll('.reader-file-item').forEach(el => {
-      el.classList.toggle('active', el.textContent === filename);
-    });
-
+    if (readerDirty && !confirm('当前文件尚未保存，确定丢弃编辑并读取另一个文件吗？')) return;
+    const version = ++readerLoadVersion;
+    readerTextarea.disabled = true;
+    btnSaveReaderContent.disabled = true;
     try {
-      const res = await fetch(`/api/chapter/read?project=${encodeURIComponent(currentProject)}&file=${encodeURIComponent(filename)}`);
-      const data = await res.json();
-      if (!data.exists) {
-        readerTextarea.value = `[文件尚未生成: ${filename}]`;
-        readerWordCountBadge.textContent = '字数: 0 (未生成)';
-      } else {
-        readerTextarea.value = data.content;
-        updateWordCount(data.content);
+      const data = await requestJson(`/api/chapter/read?project=${encodeURIComponent(projectRequestValue())}&file=${encodeURIComponent(filename)}`);
+      if (version !== readerLoadVersion) return;
+      currentReadingFile = filename;
+      readerFileName.textContent = filename;
+      document.querySelectorAll('.reader-file-item').forEach(el => {
+        el.classList.toggle('active', el.textContent === filename);
+      });
+      readerTextarea.value = data.exists ? data.content : '';
+      readerTextarea.placeholder = data.exists ? '' : `文件尚未生成: ${filename}`;
+      readerDirty = false;
+      updateWordCount(readerTextarea.value);
+    } catch (error) {
+      reportSyncError(error);
+      showToast(`文件读取失败：${error.message}`, 'error', 5000);
+    } finally {
+      if (version === readerLoadVersion) {
+        readerTextarea.disabled = false;
+        btnSaveReaderContent.disabled = !currentReadingFile;
       }
-    } catch (err) {
-      readerTextarea.value = `加载失败: ${err.message}`;
     }
   }
 
@@ -972,65 +1596,92 @@
   }
 
   async function saveReaderContent() {
-    if (!currentReadingFile) return;
+    if (!currentReadingFile || readerTextarea.disabled) return;
+    const file = currentReadingFile;
+    const content = readerTextarea.value;
+    const project = projectRequestValue();
+    btnSaveReaderContent.disabled = true;
     try {
-      const res = await fetch('/api/chapter/save', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ project: currentProject, file: currentReadingFile, content: readerTextarea.value })
+      await requestJson('/api/chapter/save', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ project, file, content })
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.detail || '保存失败');
-      appendLog(`[studio] 💾 ${currentReadingFile} 已成功保存修改。`);
-      alert(`${currentReadingFile} 保存成功！`);
-      setTimeout(() => { loadGraph(currentProject); }, 400);
-    } catch (err) {
-      alert(`保存失败: ${err.message}`);
-    }
+      if (file === currentReadingFile && content === readerTextarea.value && project === projectRequestValue()) readerDirty = false;
+      showToast(`${file} 已保存`);
+      scheduleStateRefresh();
+      if (pendingGraphRefresh) scheduleGraphRefresh();
+    } catch (error) {
+      reportSyncError(error);
+      showToast(`文件保存失败：${error.message}`, 'error', 5000);
+    } finally { btnSaveReaderContent.disabled = readerTextarea.disabled || !currentReadingFile; }
   }
 
   // ==========================================
   // 9. 事件绑定
   // ==========================================
   function setupEventListeners() {
-    projectSelect.addEventListener('change', (e) => {
+    projectSelect.addEventListener('change', async (e) => {
+      if (!allowContextSwitch()) { projectSelect.value = currentProject; return; }
       currentProject = e.target.value;
-      loadGraph(currentProject);
+      explicitChapter = null;
+      selectedNodeId = null;
+      inspectorDrawer.classList.remove('open');
+      try {
+        localStorage.setItem('studio_selected_project', currentProject);
+        await loadWorkflows(currentProject);
+        await loadGraph(currentProject);
+      } catch (error) { reportSyncError(error); }
     });
 
-    if (chapterInput) {
-      chapterInput.addEventListener('change', (e) => {
-        const val = parseInt(e.target.value, 10);
-        if (!isNaN(val) && val > 0) {
-          loadGraph(currentProject, val);
+    workflowSelect.addEventListener('change', async (e) => {
+      if (!allowContextSwitch()) { workflowSelect.value = currentWorkflow; return; }
+      currentWorkflow = e.target.value;
+      explicitChapter = null;
+      selectedNodeId = null;
+      inspectorDrawer.classList.remove('open');
+      try {
+        localStorage.setItem(`studio_wf_${currentProject}`, currentWorkflow);
+        await loadGraph(currentProject);
+      } catch (error) { reportSyncError(error); }
+    });
+
+    function switchChapter(value) {
+      if (Number.isInteger(value) && value > 0 && value !== currentChapter && allowContextSwitch()) {
+        loadGraph(currentProject, value).catch(reportSyncError);
+      } else chapterInput.value = currentChapter;
+    }
+    chapterInput.addEventListener('change', e => switchChapter(parseInt(e.target.value, 10)));
+    chapterInput.addEventListener('keydown', e => {
+      if (e.key === 'Enter') { e.preventDefault(); chapterInput.blur(); }
+    });
+    btnPrevChapter.addEventListener('click', () => switchChapter(Math.max(1, currentChapter - 1)));
+    btnNextChapter.addEventListener('click', () => switchChapter(currentChapter + 1));
+
+    btnRefreshStatus.addEventListener('click', refreshGraphExplicitly);
+    document.getElementById('btnReloadGraph').addEventListener('click', refreshGraphExplicitly);
+    inspectorDrawer.addEventListener('focusout', () => { if (pendingGraphRefresh) scheduleGraphRefresh(); });
+    [fieldRole, fieldPrompt, fieldRun, fieldAsk, fieldInputs, fieldOutputs,
+      fieldAssertMinWords, fieldAssertMaxWords, fieldAssertMinScore, fieldAssertScoreField].forEach(el => {
+      el.addEventListener('input', markInspectorDirty);
+    });
+    window.addEventListener('beforeunload', e => {
+      if (hasUnsavedChanges() || pendingSaves) { e.preventDefault(); e.returnValue = ''; }
+    });
+    if (liveStatusBadge) {
+      liveStatusBadge.addEventListener('click', () => {
+        if (!liveWs || liveWs.readyState !== WebSocket.OPEN) {
+          showToast('🔄 正在重新连接实时双向通道...', 'info', 1500);
+          initLiveWebSocket();
+        } else {
+          showToast('🟢 实时通道正常连接中（底层文件变动将秒级推送）', 'info', 2000);
         }
       });
-      chapterInput.addEventListener('keydown', (e) => {
-        if (e.key === 'Enter') {
-          const val = parseInt(e.target.value, 10);
-          if (!isNaN(val) && val > 0) {
-            loadGraph(currentProject, val);
-          }
-        }
-      });
     }
 
-    if (btnPrevChapter) {
-      btnPrevChapter.addEventListener('click', () => {
-        const prev = Math.max(1, currentChapter - 1);
-        loadGraph(currentProject, prev);
-      });
-    }
-
-    if (btnNextChapter) {
-      btnNextChapter.addEventListener('click', () => {
-        const next = currentChapter + 1;
-        loadGraph(currentProject, next);
-      });
-    }
-
-    btnRefreshStatus.addEventListener('click', () => { loadGraph(currentProject, currentChapter); });
-    btnSaveGraph.addEventListener('click', saveGraphToServer);
+    btnSaveGraph.addEventListener('click', () => {
+      if (inspectorDirty) saveCurrentNodeFromInspector(btnSaveGraph);
+      else saveGraphToServer(btnSaveGraph);
+    });
     btnReconcile.addEventListener('click', () => { runNode(null, 'reconcile'); });
 
     btnToggleTerminal.addEventListener('click', () => {
@@ -1045,15 +1696,20 @@
 
     // Inspector
     btnCloseInspector.addEventListener('click', () => {
+      if (!confirmInspectorDiscard()) return;
       inspectorDrawer.classList.remove('open');
       selectedNodeId = null;
       document.querySelectorAll('.node-card').forEach(c => c.classList.remove('selected'));
+      if (pendingGraphRefresh) scheduleGraphRefresh();
     });
-    btnSaveNode.addEventListener('click', saveCurrentNodeFromInspector);
+    btnSaveNode.addEventListener('click', () => {
+      saveCurrentNodeFromInspector(btnSaveNode);
+    });
     btnDeleteNode.addEventListener('click', deleteSelectedNode);
 
     if (selectNodeModel) {
       selectNodeModel.addEventListener('change', () => {
+        if (boundContext) return;
         if (selectNodeModel.value === 'custom') {
           if (fieldModel) {
             fieldModel.classList.remove('hidden');
@@ -1065,13 +1721,13 @@
             fieldModel.value = selectNodeModel.value;
           }
         }
-        saveCurrentNodeFromInspector();
+        markInspectorDirty();
       });
     }
 
     if (fieldModel) {
       fieldModel.addEventListener('input', () => {
-        saveCurrentNodeFromInspector();
+        if (!boundContext) markInspectorDirty();
       });
     }
     btnDispatchHost.addEventListener('click', () => {
@@ -1121,10 +1777,17 @@
     }, { passive: false });
 
     canvasViewport.addEventListener('mousedown', (e) => {
+      if (connectingFromId) return;
       if (e.target === canvasViewport || e.target.id === 'edgesSvg') {
         isPanning = true;
         startMouseX = e.clientX - panX;
         startMouseY = e.clientY - panY;
+      }
+    });
+
+    canvasViewport.addEventListener('click', (e) => {
+      if (connectingFromId && !e.target.closest('.node-card') && !e.target.closest('.connect-tip-bar')) {
+        cancelConnect();
       }
     });
 
@@ -1134,16 +1797,23 @@
         panY = e.clientY - startMouseY;
         applyCanvasTransform();
       } else if (draggingNodeId) {
-        const x = (e.clientX - panX) / zoom - dragOffsetX;
-        const y = (e.clientY - panY) / zoom - dragOffsetY;
+        const rect = canvasViewport.getBoundingClientRect();
+        const x = (e.clientX - rect.left - panX) / zoom - dragOffsetX;
+        const y = (e.clientY - rect.top - panY) / zoom - dragOffsetY;
         nodePositions[draggingNodeId] = { x: Math.round(x), y: Math.round(y) };
         const card = document.getElementById(`node-${draggingNodeId}`);
         if (card) card.style.transform = `translate(${x}px, ${y}px)`;
         renderEdges();
       } else if (connectingFromId) {
-        // 连线中：实时计算逻辑坐标并更新动态贝塞尔虚线
-        const mouseCanvasX = (e.clientX - panX) / zoom;
-        const mouseCanvasY = (e.clientY - panY) / zoom;
+        if (connectStartMousePos) {
+          const dist = Math.hypot(e.clientX - connectStartMousePos.x, e.clientY - connectStartMousePos.y);
+          if (dist > 6) {
+            isDragConnecting = true;
+          }
+        }
+        const rect = canvasViewport.getBoundingClientRect();
+        const mouseCanvasX = (e.clientX - rect.left - panX) / zoom;
+        const mouseCanvasY = (e.clientY - rect.top - panY) / zoom;
         updateTempEdge(mouseCanvasX, mouseCanvasY);
 
         // 目标悬浮卡片高亮
@@ -1159,21 +1829,27 @@
     });
 
     window.addEventListener('mouseup', (e) => {
-      if (isDraggingConnect && connectingFromId) {
-        const targetCard = document.elementFromPoint(e.clientX, e.clientY)?.closest('.node-card');
-        if (targetCard) {
-          const targetId = targetCard.id.replace('node-', '');
-          if (targetId && targetId !== connectingFromId) {
-            completeConnectTo(targetId);
-            isPanning = false;
-            draggingNodeId = null;
-            return;
+      if (connectingFromId) {
+        if (isDragConnecting) {
+          const targetCard = document.elementFromPoint(e.clientX, e.clientY)?.closest('.node-card');
+          if (targetCard) {
+            const targetId = targetCard.id.replace('node-', '');
+            if (targetId && targetId !== connectingFromId) {
+              completeConnectTo(targetId);
+              isPanning = false;
+              draggingNodeId = null;
+              connectStartMousePos = null;
+              isDragConnecting = false;
+              return;
+            }
           }
+          cancelConnect();
         }
-        cancelConnect();
+        connectStartMousePos = null;
       }
       isPanning = false;
       draggingNodeId = null;
+      if (pendingGraphRefresh) scheduleGraphRefresh();
     });
 
     // ESC 键随时取消连线
@@ -1184,6 +1860,12 @@
     });
 
     btnCancelConnect.addEventListener('click', cancelConnect);
+
+    // 跨浏览器窗口切换自动同步（当从其他浏览器如 Edge 切回 Chrome 时，自动静默刷新最新磁盘状态）
+    window.addEventListener('focus', () => {
+      if (uiReady && currentProject) scheduleStateRefresh();
+      if (pendingGraphRefresh) scheduleGraphRefresh();
+    });
 
     // 模态框打开与关闭
     btnOpenNewProjectModal.addEventListener('click', () => { createProjectModal.classList.remove('hidden'); });
@@ -1199,12 +1881,20 @@
     btnConfirmAddNode.addEventListener('click', handleAddNode);
 
     btnToggleReader.addEventListener('click', openReaderModal);
-    btnCloseReaderModal.addEventListener('click', () => { readerModal.classList.add('hidden'); });
+    btnCloseReaderModal.addEventListener('click', () => {
+      readerModal.classList.add('hidden');
+      if (pendingGraphRefresh) scheduleGraphRefresh();
+    });
     btnSaveReaderContent.addEventListener('click', saveReaderContent);
-    readerTextarea.addEventListener('input', (e) => { updateWordCount(e.target.value); });
+    readerTextarea.addEventListener('input', (e) => {
+      readerDirty = true;
+      editVersion++;
+      updateWordCount(e.target.value);
+    });
   }
 
   async function handleCreateProject() {
+    if (boundContext || !uiReady) return;
     const slug = newProjSlug.value.trim();
     if (!slug) return alert('请输入工程标识 (Slug)');
 
@@ -1234,6 +1924,7 @@
   }
 
   async function handleAddPath() {
+    if (boundContext || !uiReady) return;
     const rawPath = customPathInput.value.trim();
     if (!rawPath) return alert('请输入有效路径');
 
@@ -1255,12 +1946,14 @@
   }
 
   function handleAddNode() {
+    if (!uiReady || !currentGraph) return;
     const id = newNodeId.value.trim().replace(/\s+/g, '_').toLowerCase();
     const kind = newNodeKind.value;
     const role = newNodeRole.value.trim();
 
     if (!id) return alert('请输入合法节点 ID');
     if (currentGraph.nodes[id]) return alert(`节点 [${id}] 已存在！`);
+    if (!confirmInspectorDiscard()) return;
 
     const node = { kind: kind };
     if (kind === 'agent') {

@@ -105,3 +105,41 @@ def test_load_from_json():
         assert c.slug == "custom-book"
         assert c.title == "异化黎明"
         assert c.protagonist_name == "白沉"
+
+
+def test_style_constitution_persistence():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        root = Path(tmpdir) / "style-novel"
+        c = NovelConstitution(
+            slug="style-novel",
+            title="终焉之舍",
+            genre="无限流悬疑",
+            style_archetype="十日终焉×诡舍 (现代通俗白话/生死博弈/深度心理悬疑)",
+            classical_ratio="纯现代通俗白话占比 90%~95%，半文半白/古意字词仅占 5%~10% 适度穿插",
+            psychological_depth="高密度心理推演与生理应激白描（心率、冷汗、微表情、多步推演反制），严禁削弱情绪",
+        )
+        res = fan_out_constitution(c, root)
+
+        # 1. 验证 novel.md 中写入了文风规则
+        novel_md = (root / "novel.md").read_text(encoding="utf-8")
+        assert "文风流派对标" in novel_md
+        assert "十日终焉×诡舍" in novel_md
+        assert "纯现代通俗白话占比 90%~95%" in novel_md
+        assert "心理与情绪流铁律" in novel_md
+
+        # 2. 验证 snapshot.json 中持久化了文风元数据
+        snap = json.loads((root / "设定" / "事实账本" / "snapshot.json").read_text(encoding="utf-8"))
+        assert "style_constitution" in snap
+        assert snap["style_constitution"]["style_archetype"] == "十日终焉×诡舍 (现代通俗白话/生死博弈/深度心理悬疑)"
+        assert "90%~95%" in snap["style_constitution"]["classical_ratio"]
+
+        # 3. 验证 voice_sample.md 包含了十日终焉与诡舍黄金对照
+        sample = (root / "资产" / "voice_sample.md").read_text(encoding="utf-8")
+        assert "十日终焉" in sample
+        assert "诡舍" in sample
+        assert "开门见煞" in sample
+
+        # 4. 验证 graph.yaml 包含了文风参数与润色提示词要求
+        graph_text = (root / "graph.yaml").read_text(encoding="utf-8")
+        assert "十日终焉×诡舍" in graph_text
+        assert "坚决粉碎大段半文半白说教" in graph_text

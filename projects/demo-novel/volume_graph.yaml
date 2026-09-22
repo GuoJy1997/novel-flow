@@ -1,0 +1,200 @@
+version: 1
+name: volume-blueprint-workflow
+params:
+  volume_num: 2
+  volume_pad: '02'
+  volume_name: 沉默矩阵
+  genre: 悬疑推理 × 规则怪谈 × 高智商博弈
+  target_chapters: 20
+  chapter_num: 1
+  chapter_pad3: '001'
+  chapter_pad: '01'
+  chapter_prev_num: 1
+  chapter_prev_pad: '01'
+  chapter_prev_pad3: '001'
+nodes:
+  volume_premise:
+    kind: agent
+    model: gemini-3.8-flash-high
+    role: 分卷立意与终局定位官
+    prompt: '你正在策划长篇小说《{name}》的第 {volume_num} 卷（{volume_name}）大纲立项。
+
+      运用技能【novel-plot-architect】深入研读全书主线与核心世界观，完成宏观定位：
+
+      1. 本卷核心舞台与时空坐标（舞台环境特征、封闭边界、进入契机）；
+
+      2. 核心戏剧命题与哲学冲突（生存与尊严、秩序与自由、真相与生存等核心矛盾）；
+
+      3. 主角团队的心智考验与认知蜕变目标；
+
+      4. 终局高光抉择时刻（必须是一道考验人性与公心的两难死局）。
+
+      直接输出精炼完整的 Markdown 到指定目标文件。'
+    inputs:
+    - 设定/大纲/
+    - 设定/世界观/
+    outputs:
+    - 工作区/分卷策划/第{volume_pad}卷_01_立意与核心命题.md
+    skills:
+    - novel-plot-architect
+    assert:
+      min_words: 400
+  dungeon_physics:
+    kind: agent
+    after:
+    - volume_premise
+    model: gemini-3.8-flash-high
+    model_tier: pro
+    subagent_type: novel_dungeon_architect
+    role: 副本物理法则与生存机制架构师
+    prompt: '依据《工作区/分卷策划/第{volume_pad}卷_01_立意与核心命题.md》与世界观底层法则，
+
+      运用技能【novel-dungeon-physics】构建本卷独立的【超自然生存物理学蓝图】：
+
+      1. 表象环境律：视听畸变、空间拓扑异常、原住民信息污染与伪常识；
+
+      2. 绝对致死判定律（红线抹杀）：严禁数值打桩，必须设计 2~3 条绝对因果行为抹杀判定（严格的行为-状态触发式判定）；
+
+      3. 生门兑现契约 (Win Condition)：通关绝非杀光怪物，必须是法则对冲、因果收束或认知破壁；
+
+      4. 破局剪刀前置伪装：设计在前 3 章以日常生活细节伪装登场的破局唯一钥匙；
+
+      5. 代价守恒：明确通关必付出的身体不可逆伤残、战略装备报废或同伴牺牲。'
+    inputs:
+    - 工作区/分卷策划/第{volume_pad}卷_01_立意与核心命题.md
+    - 设定/世界观/
+    outputs:
+    - 工作区/分卷策划/第{volume_pad}卷_02_副本物理与生存法则.md
+    skills:
+    - novel-dungeon-physics
+    assert:
+      min_words: 600
+      score_field: overall
+  faction_agenda_matrix:
+    kind: agent
+    after:
+    - dungeon_physics
+    model: gemini-3.8-flash-high
+    model_tier: pro
+    subagent_type: novel_faction_schemer
+    role: 多方势力博弈与阴谋精算师
+    prompt: '依据《工作区/分卷策划/第{volume_pad}卷_02_副本物理与生存法则.md》与出场人物档案，
+
+      运用技能【novel-faction-schemer】构建本卷的【多极势力动态博弈与暗算盘总账】：
+
+      1. 多极势力生态位定位表：根据剧情自由组合 3~5 方（秩序霸主、激进掀桌者、摇摆方、隐秘操盘手、游离破局变量等）各自的公开宣称、真实私利、底牌与死穴；
+
+      2. 动态均势与合纵连横：测算各方背叛阈值，排布联合抗强或分化瓦解路径；
+
+      3. 递归博弈树与将计就计：排布多层嵌套反转（借敌人的敌人借刀杀人并拥有完全可否认性）；
+
+      4. 妥协泄压与替罪羊方案：设计当巨头碰撞死局时，各方共同抛弃以平息大局的替罪羊；
+
+      5. 不可逆代价值分配：算清博弈各方与主角付出的沉重代价值。'
+    inputs:
+    - 工作区/分卷策划/第{volume_pad}卷_02_副本物理与生存法则.md
+    - 设定/人物/
+    outputs:
+    - 工作区/分卷策划/第{volume_pad}卷_03_势力暗算盘与博弈矩阵.md
+    skills:
+    - novel-faction-schemer
+    assert:
+      min_words: 600
+      score_field: overall
+  revelation_ladder:
+    kind: agent
+    after:
+    - faction_agenda_matrix
+    model: gemini-3.8-flash-high
+    role: 反转链与认知阶梯设计官
+    prompt: '综合副本生存法则与多方暗算盘，运用技能【story-suspense-investigation】，
+
+      构建整卷由浅入深的【四阶认知反转阶梯 (Revelation Ladder)】：
+
+      - 阶梯 ①：【表象误读】（主角与读者以为的表层危机）；
+
+      - 阶梯 ②：【线索破损】（旧模型破产，发现致命真凶是看不见的物理规则）；
+
+      - 阶梯 ③：【灾变爆发】（局势全面失控，伪装被撕下）；
+
+      - 阶梯 ④：【终极掀桌与大裁决】（阴谋浮出水面，主角打破各方算盘做出生死决断）。
+
+      每一级阶梯必须明确“对应的具体章节范围”、“推翻的旧假设”与“颠覆后的新认知”。'
+    inputs:
+    - 工作区/分卷策划/第{volume_pad}卷_02_副本物理与生存法则.md
+    - 工作区/分卷策划/第{volume_pad}卷_03_势力暗算盘与博弈矩阵.md
+    outputs:
+    - 工作区/分卷策划/第{volume_pad}卷_04_四阶认知反转链.md
+    skills:
+    - story-suspense-investigation
+    assert:
+      min_words: 500
+  pacing_beats:
+    kind: agent
+    after:
+    - revelation_ladder
+    model: gemini-3.8-flash-high
+    role: 三幕节拍器与逐章细纲架构师
+    prompt: '依据【认知反转阶梯】与【势力博弈网】，运用技能【novel-scene-tension】，
+
+      将整卷划分为 6 幕标准叙事节拍（入局、修禊、流觞、现身、博弈、终局），
+
+      细化输出本卷全 {target_chapters} 章的【逐章骨架细纲矩阵】：
+
+      每章包含：
+
+      1. 章节序号与标题建议；
+
+      2. 核心矛盾推进点；
+
+      3. 出场人物与知情视界状态；
+
+      4. 章节结尾悬念钩子（短/中/长期待）。'
+    inputs:
+    - 工作区/分卷策划/第{volume_pad}卷_04_四阶认知反转链.md
+    - 工作区/分卷策划/第{volume_pad}卷_03_势力暗算盘与博弈矩阵.md
+    - 工作区/分卷策划/第{volume_pad}卷_02_副本物理与生存法则.md
+    outputs:
+    - 工作区/分卷策划/第{volume_pad}卷_05_逐章细纲矩阵.md
+    skills:
+    - novel-scene-tension
+    assert:
+      min_words: 1000
+  clue_ledger_sync:
+    kind: agent
+    after:
+    - pacing_beats
+    model: gemini-3.8-flash-high
+    role: 伏笔总账同步与审查员
+    prompt: '对照《第{volume_pad}卷_05_逐章细纲矩阵.md》，运用技能【novel-memory-ledger】，
+
+      核查并输出本卷完整的【伏笔生命周期总账】：
+
+      1. 严格区分【卷内闭环短线伏笔】与【跨卷战略长线暗桩】；
+
+      2. 检查每条短线伏笔是否满足“播种-发酵-锁紧-回收”完整闭环，严禁丢线；
+
+      3. 检查跨卷暗桩是否做好保密与防剧透隔离；
+
+      4. 登记入库，输出完整的《第{volume_pad}卷_06_伏笔生命周期总账.md》。'
+    inputs:
+    - 工作区/分卷策划/第{volume_pad}卷_05_逐章细纲矩阵.md
+    - 设定/事实账本/snapshot.json
+    outputs:
+    - 工作区/分卷策划/第{volume_pad}卷_06_伏笔生命周期总账.md
+    skills:
+    - novel-memory-ledger
+    assert:
+      min_words: 400
+  author_accept:
+    kind: human
+    after:
+    - clue_ledger_sync
+    ask: 请创作者审阅本卷的副本物理机制、四方暗算盘、四阶认知反转链、逐章细纲矩阵及伏笔总账，确认无误后点击放行归档为正式分卷资产。
+    inputs:
+    - 工作区/分卷策划/第{volume_pad}卷_02_副本物理与生存法则.md
+    - 工作区/分卷策划/第{volume_pad}卷_03_势力暗算盘与博弈矩阵.md
+    - 工作区/分卷策划/第{volume_pad}卷_05_逐章细纲矩阵.md
+    - 工作区/分卷策划/第{volume_pad}卷_06_伏笔生命周期总账.md
+    outputs:
+    - 设定/分卷/第{volume_pad}卷_{volume_name}_完整故事大纲.md

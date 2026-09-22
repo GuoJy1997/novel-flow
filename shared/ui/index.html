@@ -3,11 +3,19 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>小说可视化工作流 Studio (Antigravity 宿主驱动)</title>
+  <title>小说可视化工作流 Studio (宿主 Agent 驱动)</title>
   <link rel="stylesheet" href="studio.css">
 </head>
-<body>
-  <div class="studio-layout">
+<body class="studio-loading">
+  <div id="studioLoadingOverlay" class="studio-loading-overlay" role="status" aria-live="polite">
+    <div class="studio-loading-panel">
+      <h1 id="studioLoadingTitle">正在准备小说工作台</h1>
+      <p id="studioLoadingMessage">校验服务与当前工作流，完成图谱绘制后开放编辑。</p>
+      <p>页面就绪不代表执行授权；请回主对话等待 supervisor 询问并确认。</p>
+      <button id="btnRetryStudio" class="btn btn-primary" type="button" onclick="window.location.reload()">刷新重试</button>
+    </div>
+  </div>
+  <div class="studio-layout" inert aria-busy="true">
     <!-- 顶部导航栏 -->
     <header class="studio-topbar">
       <div class="brand-group">
@@ -32,19 +40,34 @@
         <button id="btnOpenAddPathModal" class="btn btn-secondary" title="关联外部已存在的小说目录">📂 关联目录</button>
       </div>
 
-      <!-- 动态目标章节切换器 -->
-      <div class="chapter-selector-group">
-        <label for="chapterInput">目标章节：</label>
+      <div class="workflow-selector-group">
+        <label for="workflowSelect">工作流：</label>
+        <select id="workflowSelect" class="studio-select" title="切换当前工作流图谱">
+          <option value="graph.yaml">📄 单章正文流水线</option>
+          <option value="volume_graph.yaml">🗺️ 分卷大纲创世纪</option>
+        </select>
+      </div>
+
+      <!-- 动态目标章节/卷号切换器 -->
+      <div class="chapter-selector-group" id="chapterSelectorGroup">
+        <label for="chapterInput" id="chapterSelectorLabel">目标章节：</label>
         <button id="btnPrevChapter" class="btn btn-secondary btn-sm" title="上一章">◀</button>
         <div class="chapter-input-wrap">
-          <span>第</span>
+          <span id="chapterUnitPrefix">第</span>
           <input type="number" id="chapterInput" class="studio-input chapter-input" value="1" min="1" max="999" title="输入章节号后回车快速切换" />
-          <span>章</span>
+          <span id="chapterUnitSuffix">章</span>
         </div>
         <button id="btnNextChapter" class="btn btn-secondary btn-sm" title="下一章">▶</button>
       </div>
 
       <div class="topbar-actions">
+        <div id="liveStatusBadge" class="live-status-badge live-offline" title="与本地底层小说引擎双向实时同步">
+          <span class="live-dot"></span>
+          <span class="live-text">实时连接中</span>
+        </div>
+        <div id="hostBadge" class="host-badge hidden" title="当前驱动工作流的宿主 Agent，节点模型档位已按该宿主的模型档案自动适配">
+          <span>🧩 宿主：</span><span id="hostBadgeName">检测中</span>
+        </div>
         <button id="btnOpenAddNodeModal" class="btn btn-secondary">➕ 添加节点</button>
         <button id="btnSaveGraph" class="btn btn-primary" title="保存节点配置并更新 graph.yaml">💾 保存配置</button>
         <button id="btnRefreshStatus" class="btn btn-secondary" title="重新计算哈希与状态">🔄 刷新状态</button>
@@ -54,6 +77,15 @@
         <button id="btnToggleTerminal" class="btn btn-secondary" title="查看引擎底层实时输出">💻 实时终端</button>
       </div>
     </header>
+
+    <div id="boundStudioNotice" class="studio-context-notice hidden">
+      <span id="boundStudioContext"></span>
+      <span>仅编辑与审阅；请回主对话等待 supervisor 询问，明确确认后才执行工作流。</span>
+    </div>
+    <div id="studioSyncNotice" class="studio-sync-notice hidden" role="status" aria-live="polite">
+      <span id="studioSyncMessage"></span>
+      <button id="btnReloadGraph" class="btn btn-secondary btn-sm" type="button">重新载入</button>
+    </div>
 
     <!-- 主体区域：画布视口 -->
     <main class="studio-main">
@@ -115,7 +147,7 @@
         <div class="inspector-body">
           <!-- 核心操作按钮组 -->
           <div class="inspector-action-box">
-            <button id="btnDispatchHost" class="btn btn-primary btn-block">🚀 在 Antigravity 中执行</button>
+            <button id="btnDispatchHost" class="btn btn-primary btn-block">🚀 在宿主 Agent 中执行</button>
             <button id="btnCopyPrompt" class="btn btn-secondary btn-block">📋 复制 Agent 任务指令</button>
           </div>
 
@@ -140,6 +172,8 @@
                 </select>
                 <input type="text" id="fieldModel" class="studio-input hidden" style="margin-top:6px;" placeholder="输入自定义模型ID，例如: gemini-3.8-flash-high" />
               </div>
+              <div id="inspectorModelAdapt" class="model-adapt-row hidden" title="状态文件解析出的实际执行模型（由宿主自动适配，只读展示）"></div>
+              <p id="boundModelNote" class="model-readonly-note hidden">模型由当前宿主的 host_profiles 及角色绑定解析。本轮仅只读展示，不支持在网页覆写角色模型。</p>
             </div>
             <div class="form-group">
               <label for="fieldRole">担当角色 (Role):</label>
@@ -356,6 +390,11 @@
         </div>
       </div>
     </div>
+  </div>
+  <!-- 全局悬浮反馈提示 Toast -->
+  <div id="studioToast" class="studio-toast hidden">
+    <span id="toastIcon" class="toast-icon">✅</span>
+    <span id="toastMsg" class="toast-msg">已成功保存至本地磁盘 (graph.yaml)</span>
   </div>
 
   <script src="studio.js"></script>

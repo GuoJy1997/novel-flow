@@ -63,11 +63,15 @@ projects/<novel-slug>/
      - **阶梯二（世界法则）**：与现实关联度、力量/科技层级、3 条绝对不可违背的法则铁律与终极代价；
      - **阶梯三（人物灵魂）**：主角表面身份、隐藏底牌、核心执念、性格缺陷、反派自洽逻辑、知情边界；
      - **阶梯四（三幕与暗线）**：全书三幕走向、首卷破局目标、1~2 个【严禁前期剧透】的深层暗线；
-     - **阶梯五（叙事声纹）**：受限第三人称、文风对标（如融合鬼吹灯/十日终焉/我不是戏神）、抗朱雀禁词；
+     - **阶梯五（叙事声纹与语言风格定制）**：
+       - **【强制必问】**：明确指定全书核心文风/语言风格原型，严禁模糊带过！默认首推 **《十日终焉》×《诡舍》原型**（纯现代通俗白话占比 90%~95%、高智商推演齿轮咬合、生理恐惧与紧绷心理流、半文半白仅占 5%~10% 适度穿插），亦可选《鬼吹灯》探险风、都市冷硬风或自定义；
+       - 明确白话与文言配比（严防流水线生成枯燥艰涩的大段半文半白）；
+       - 明确心理与情绪深度（必须包含瞳孔、心率、冷汗等生理恐惧应激与主角高速推演思维，严禁情感空心化）；
+       - 明确抗朱雀一票否决禁词表（“宛如”、“仿佛在诉说着”、“在这一刻”等）；
      - **阶梯六（工程参数）**：单章字数区间（如 2500~4500）、质检及格门槛（SCORES >= 80）。
-2. **订立最高宪法与原子分发**：
-   - 将确认后的信息编译生成全书不可逾越的顶层法典 `novel.md`；
-   - 自动调用 `shared/novel_clarify.py` 或直接工具分发落盘至 `设定/世界观/`、`设定/人物/`、`设定/大纲/`、`设定/事实账本/snapshot.json`、`资产/voice_sample.md` 以及生成 `graph.yaml`。
+2. **订立最高宪法与文风全生命周期持久化**：
+   - 将确认后的信息（包含确立的文风原型与配比）编译生成全书不可逾越的顶层法典 `novel.md`（特别是第四条：叙事声纹与抗朱雀检测规范）；
+   - 自动调用 `shared/novel_clarify.py` 或直接工具分发落盘至 `设定/世界观/`、`设定/人物/`、`设定/大纲/`、`设定/事实账本/snapshot.json`（持久化 `style_constitution`）、`资产/voice_sample.md`（写入《十日终焉》×《诡舍》黄金样本）以及生成 `graph.yaml`（各节点注入通俗白话与心理推演提示词断言）。
 
 ---
 
@@ -93,11 +97,15 @@ flowchart LR
      ```
    - 确认待执行节点（如 `gather_context` -> `draft_chapter` -> `deai_polish` -> `review_qc`）。
 2. **顺次执行节点并原子落盘**：
+   - **执行前点亮 WebUI 运行态**：在调度 Subagent 开始执行节点前，执行：
+     ```bash
+     python shared/pipeline.py start <node_id> --project projects/<slug> --chapter {N}
+     ```
+     （此命令会瞬间在 WebUI 画布上点亮该节点的赛博青蓝呼吸脉冲与动态旋转 Spinner，让创作者即时感知当前哪个节点正在运行！）
    - 读取 inputs 文件（如 `设定/世界观/`、`设定/人物/`、`设定/大纲/` 中的细纲）；
-   - 切换角色生成正文粗稿，写入 `工作区/第11章/ch11_raw.md`；
-   - 对照 `资产/voice_sample.md` 进行去 AI 味润色，写入 `工作区/第11章/ch11_polished.md`；
-   - 严格进行质检并输出报告 `工作区/第11章/qc_report.md`，报告末尾输出断言打分：
-     `SCORES: {"overall": 88, "ooc": 90, "lore": 92, "pacing": 86}`
+   - 切换角色或调用 Subagent 生成对应产物并原子写入 `outputs` 路径；
+   - 严格进行质检断言并输出符合规范的 Markdown 产物；
+   - **执行后自动结项**：运行 `python shared/pipeline.py status --project projects/<slug> --chapter {N}`，引擎自动校验产物并清除运行态，节点卡片即刻变为 🟢 `current`。
 3. **入库与统计**：
    - 审核通过后，执行 `finalize` 节点，将润色稿归档至 `正文/第一卷/第11章.md`；
    - 触发校准命令：
@@ -150,29 +158,94 @@ flowchart LR
 
 ---
 
+### 模式 4：宿主感知的子智能体注册与模型自适应挂载 (Host-Aware Subagent Registration & Dynamic Mounting)
+
+当创作者在某个 Agent 宿主（如 **Qoder**、**Antigravity**）中首次接手项目，或需要更新算力模型绑定时：
+> “把小说工作流的核心节点封装注册进宿主 Agent，并配置各节点模型”
+
+**核心原则（务必遵守）**：注册动作由 **宿主 Agent 自己完成**，而不是由本仓库代码完成——因为不同宿主注册子智能体的方式完全不同。本仓库的 `subagent_registry.py` 只做三件事：**感知宿主 → 解析每个角色在该宿主下真实可用的模型 → 打包出一份注册交接物（register-spec）**。宿主 Agent 拿到交接物后，按自己宿主的契约去注册。
+
+```mermaid
+flowchart TB
+    A["独立子智能体资产 (subagents/*.yaml)"] --> B["subagent_registry.py"]
+    M["宿主模型档案 (manifest.json host_profiles)"] --> B
+    B -->|1. detect_host 感知宿主| B
+    B -->|2. role_models 角色级解析真实模型| B
+    B -->|3. build_registration_spec 打包交接物| S["register-spec JSON"]
+    S -->|宿主=Qoder| Q["宿主 Agent 写 .qoder/agents/*.md 定义文件"]
+    S -->|宿主=Antigravity| E["宿主 Agent 调 define_subagent 动态注册"]
+    Q --> F["Agent(subagent_type=name) 派发"]
+    E --> G["invoke_subagent(TypeName, Model) 派发"]
+```
+
+1. **查验独立规格资产库 (`subagents/`)**：
+   - 七大专家独立定义（5 核心 + 2 扩展）：
+     - `novel_context_scout` (`context_scout.yaml`): 前情探索与状态对齐总账员（默认 `flash`）
+     - `novel_chapter_writer` (`chapter_writer.yaml`): 长篇小说主笔作家（默认 `flash`）
+     - `novel_deai_polisher` (`deai_polisher.yaml`): 去AI味与文风校准专家（默认 `flash`）
+     - `novel_persona_auditor` (`persona_auditor.yaml`): 角色人设与行为边界稽查官（默认 `flash`）
+     - `novel_qc_reviewer` (`qc_reviewer.yaml`): 历史考据主编与反吃书盲审员（默认 `pro`）
+     - `novel_dungeon_architect` (`dungeon_architect.yaml`): 副本/秘境物理规则架构师（默认 `pro`）
+     - `novel_faction_schemer` (`faction_schemer.yaml`): 门派/势力权谋议程编排师（默认 `pro`）
+   - 注意：yaml 规格里**不再写任何具体模型名**，只有 `default_tier`（flash/pro）这个跨宿主抽象。具体模型只存在于各宿主的 `host_profiles.<host>` 里，彼此对等——antigravity 用 gemini/claude，qoder 用内置 ID，没有哪个宿主是"出厂默认"。某角色在某宿主下用哪个模型，完全由第 2 步的角色级档案（`role_models`）决定。
+2. **感知宿主 + 角色级模型解析（代码负责）**：
+   - 交互式档位方案仍供创作者选取（决定每个角色的 `tier`）：
+     - **方案 A（黄金推荐配置）**：前情/起草/润色/人设 = `flash`，盲审/副本/权谋 = `pro`
+     - **方案 B（全速省额度配置）**：全节点 `flash`
+     - **方案 C（全 Pro 极致深度配置）**：全节点 `pro`
+     - **方案 D（自定义逐节点指定）**：逐一指定各节点档位
+   - 持久化写入绑定（tier 层面）：
+     ```bash
+     python shared/subagent_registry.py configure --project <novel-dir> --preset recommended
+     ```
+   - **宿主模型档案在 `subagents/manifest.json` 的 `host_profiles` 里提前写死，用户/宿主 Agent 可编辑**。其中 `qoder.role_models` 是 7 个角色 → Qoder 真实内置模型 ID 的映射（`flash` 档 → `qfmodel`，`pro` 档 → `qmodel_38max`）。
+     - ⚠ **Qoder 只认内置系统 ID（`qfmodel`/`qmodel_38max`/`gfmodel`/`gmodel`/…）与 BYOK 裸 UUID**；`gemini-*`、`claude-*`、`kimi-k3` 这类上游 slug 会被 **静默回落**到当前会话模型（2026-09-22 已实测复现）。所以角色级绑定必须填内置 ID，不能填 slug。
+   - 打包注册交接物（这一步只感知与解析，不注册）：
+     ```bash
+     python shared/subagent_registry.py register-spec --project <novel-dir> --host qoder
+     ```
+     输出的 JSON 含 `host`、`registration`（该宿主的注册契约）、`subagents[]`（每项带 `_bound_model` = 已解析成宿主真实模型 ID、`_model_origin` = `role-mapped`、`system_prompt` 等）。
+3. **宿主 Agent 自行注册（宿主负责，非代码）**：
+   - **宿主 = Qoder**：宿主 Agent 按 `registration` 契约（`mechanism: host-agent-writes-definition-files`）为每个角色写一个定义文件 `<project>/.qoder/agents/<name>.md`：
+     - frontmatter 字段：`name`、`description`、`model`（填 `_bound_model`，即内置 ID 或 BYOK 裸 UUID）、`tools`；
+     - 正文 = 该角色 yaml 的 `system_prompt` 原文；
+     - ⚠ **Qoder 不支持按调用覆盖模型**，模型只由定义文件 frontmatter 的 `model` 决定；
+     - ⚠ **新增或改名的 agent 类型必须新开会话才会被 Qoder 注册上**（`requires_new_session: true`）。
+   - **宿主 = Antigravity**：宿主 Agent 按契约（`mechanism: host-tool-define-subagent`）读取 `subagents[]`，依次调用自身的 `define_subagent` 工具注册；模型同样来自 `host_profiles.antigravity.role_models`（gemini/claude），与 qoder 对等；Antigravity 还支持按调用传档位（`per_call_model_override: true`）。
+4. **运行时精准调度**：
+   - **Qoder**：用 `Agent(subagent_type=novel_qc_reviewer)` 派发；模型已在定义文件里锁定，无需（也无法）在调用处再指定。
+   - **Antigravity**：作为 Supervisor 用 `invoke_subagent(TypeName, Role, Model, Prompt)` 派发，并显式传入用户配置的 `Model` 档位。
+5. **验证真实路由（务必做）**：
+   - 不要凭定义文件内容推断实际生效模型。派发一个真实探针后，核对 `~/.qoder/projects/<项目slug>/<会话id>/subagents/task-*.json` 的 `resolvedModel` 字段，以及结构化事件里的 `provider`/`request_id`，确认落到了预期的内置模型而非静默回落。
+
+---
+
 ## 三、 标准单节点执行细节
 
 ```mermaid
 flowchart TD
     A[1. 识别节点定义与目标] --> B[2. 读取 inputs 声明的文件/目录]
-    B --> C[3. 切换角色并执行高智力创作]
-    C --> D[4. 检查字数与断言要求]
+    B --> C[3. 调度 Subagent 执行高智力创作/审查]
+    C --> D[4. 检查人设知情边界与字数/断言要求]
     D --> E[5. 调用工具写入 outputs 目标文件]
     E --> F[6. 运行 pipeline.py status --chapter {N} 验证]
 ```
 
 ### 1. 写作节点 (`draft_chapter`)
 - **关注点**：开场场景钩子、人物知情状态、主线推进、章末悬念。
-- **产物标准**：不写“好的，这是为您撰写的第11章”等对话废话，直接输出纯正文 Markdown 至 `工作区/第{N}章/`。
+- **对白呼吸感准则**：严禁连续 450 字无互动的冗长说明文，但绝不可机械式频繁插入无营养碎嘴对白；全篇对白占比控制在 25%~40% 黄金区间，留足 60%+ 篇幅给主要人物的深度心理推演、微表情与战术动作白描。
+- **人设言行铁律**：老莫是隐藏大佬（胸有成竹、话少而精，绝不可表现为小白式疑惑）；秦华是自治区干部与战术行动派（执行力极强、专注布防掩护，绝不发表大段古代汉族历史与门阀考据）。
 
 ### 2. 去 AI 味节点 (`deai_polish`)
 - **输入重点**：对照 `资产/voice_sample.md` 的语言指纹。
 - **重点剔除**：
   - “宛如”、“仿佛在诉说着”、“在这一刻”等 AI 常用抒情助词；
-  - 三段式机械递进与四字成语滥用；
-  - 角色自问自答式的解说性台词。
+  - 整合碎嘴对白，提炼主要角色的微反应与内心博弈。
 
-### 3. 审查节点 (`review_qc`)
+### 3. 人设稽查节点 (`audit_persona`)
+- **专职职责**：排查主要角色 OOC、说话指纹错乱、知情边界越界，重点盯防老莫言行与秦华历史知识边界，输出 `03_5_人设审查报告.md`。
+
+### 4. 盲审质检节点 (`review_qc`)
 - **输出格式**：
   ```markdown
   # 第 N 章多维审查报告

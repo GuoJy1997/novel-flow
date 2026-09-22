@@ -21,3 +21,7 @@ Thumbs.db
 # 本地/运行时配置
 shared/custom_projects.json
 custom_projects.json
+
+# 密钥与本地环境变量（朱雀 API Key 等，严禁入库）
+.env
+**/.env

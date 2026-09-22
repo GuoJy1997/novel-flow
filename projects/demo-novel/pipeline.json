@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updatedAt": "2026-09-14T19:10:40Z",
+  "updatedAt": "2026-09-22T17:02:51Z",
   "params": {
     "chapter_num": 1,
     "chapter_pad": "01",
@@ -9,9 +9,15 @@
     "genre": "科幻悬疑",
     "tone": "冷峻硬核、快节奏悬疑",
     "target_words": 3200,
+    "chapter_pad3": "001",
+    "chapter_prev_num": 1,
+    "chapter_prev_pad": "01",
+    "chapter_prev_pad3": "001",
     "volume_num": 1,
     "volume_pad": "01"
   },
+  "running_node": null,
+  "running_since": null,
   "nodes": {
     "gather_state": {
       "kind": "agent",
@@ -26,26 +32,52 @@
       "outputs": [
         "工作区/第01章/01_状态上下文.md"
       ],
-      "staleBecause": null
+      "staleBecause": null,
+      "running": false,
+      "runningSince": null,
+      "model_origin": "host-unmapped",
+      "model_note": "宿主 qoder 未给角色 ?/档位 ? 配置模型；请编辑 subagents/manifest.json 的 host_profiles.qoder.role_models"
+    },
+    "scene_beats": {
+      "kind": "agent",
+      "role": "单章分场骨架与悬念架构师",
+      "status": "stale",
+      "inputs": {
+        "工作区/第01章/01_状态上下文.md": "sha256:44b8f7bf351288bb228c1b7716aa69692b4d31493fd3e9b9367d089ae20aa5f4",
+        "设定/大纲/": "sha256:2fb5fca154d3876c56eeb32ac0343e023797b38e31dff4236d4ca9eed517f97b"
+      },
+      "outputs": [
+        "工作区/第01章/01_5_分场节拍表.md"
+      ],
+      "staleBecause": "产物文件尚未生成: 工作区/第01章/01_5_分场节拍表.md",
+      "running": false,
+      "runningSince": null,
+      "model_origin": "host-unmapped",
+      "model_note": "宿主 qoder 未给角色 ?/档位 ? 配置模型；请编辑 subagents/manifest.json 的 host_profiles.qoder.role_models"
     },
     "draft_chapter": {
       "kind": "agent",
       "role": "长篇小说主笔作家",
-      "status": "current",
+      "status": "blocked",
       "inputs": {
         "工作区/第01章/01_状态上下文.md": "sha256:44b8f7bf351288bb228c1b7716aa69692b4d31493fd3e9b9367d089ae20aa5f4",
+        "工作区/第01章/01_5_分场节拍表.md": null,
         "设定/人物/": "sha256:2db8694ced4efe4a8ff7dd4402c74f1dbc3d983ad21515e780af71f71af0542f",
         "设定/世界观/": "sha256:77e23b793c6f62ebf4af8ec00b9aa5c109bb9dd61d8f478c633a069ab75244f9"
       },
       "outputs": [
         "工作区/第01章/02_正文初稿.md"
       ],
-      "staleBecause": null
+      "staleBecause": "输入文件缺失: 工作区/第01章/01_5_分场节拍表.md",
+      "running": false,
+      "runningSince": null,
+      "model_origin": "host-unmapped",
+      "model_note": "宿主 qoder 未给角色 ?/档位 ? 配置模型；请编辑 subagents/manifest.json 的 host_profiles.qoder.role_models"
     },
     "deai_polish": {
       "kind": "agent",
       "role": "去 AI 味与文风校准专家",
-      "status": "current",
+      "status": "blocked",
       "inputs": {
         "工作区/第01章/02_正文初稿.md": "sha256:6990e6f3cb8ee00ab1fd9a9f1ddecc0d310cc4837aac0775374df4517f4fa6a0",
         "资产/voice_sample.md": "sha256:3d2efa010adbad63ca0a831b9cb3c32d278518701dd44d92d3eff10c36092934"
@@ -53,12 +85,65 @@
       "outputs": [
         "工作区/第01章/03_去AI味润色稿.md"
       ],
-      "staleBecause": null
+      "staleBecause": "上游节点 [draft_chapter] 处于 blocked 状态",
+      "running": false,
+      "runningSince": null,
+      "model_origin": "host-unmapped",
+      "model_note": "宿主 qoder 未给角色 ?/档位 ? 配置模型；请编辑 subagents/manifest.json 的 host_profiles.qoder.role_models"
+    },
+    "check_zhuque": {
+      "kind": "command",
+      "role": "朱雀 AI 检测与拟人化特征门禁",
+      "status": "blocked",
+      "inputs": {
+        "工作区/第01章/03_去AI味润色稿.md": "sha256:7d5d68e4af4077ea4aade88c1d0672bc85995752e887ea3b3ab065c95dae20b2"
+      },
+      "outputs": [
+        "工作区/第01章/03_3_朱雀检测报告.md"
+      ],
+      "staleBecause": "上游节点 [deai_polish] 处于 blocked 状态",
+      "running": false,
+      "runningSince": null
+    },
+    "zhuque_api_final": {
+      "kind": "command",
+      "role": "朱雀官方 API 终审门禁 (腾讯云 EdgeOne zhuque-text)",
+      "status": "failed",
+      "inputs": {
+        "工作区/第01章/03_去AI味润色稿.md": "sha256:7d5d68e4af4077ea4aade88c1d0672bc85995752e887ea3b3ab065c95dae20b2"
+      },
+      "outputs": [
+        "工作区/第01章/03_4_朱雀API终审报告.md"
+      ],
+      "staleBecause": "评分门禁未通过: overall 得分 0.0 < 最低门槛 60.0",
+      "running": false,
+      "runningSince": null,
+      "failedBecause": "评分门禁未通过: overall 得分 0.0 < 最低门槛 60.0"
+    },
+    "audit_persona": {
+      "kind": "agent",
+      "role": "角色人设与行为边界稽查官",
+      "status": "blocked",
+      "inputs": {
+        "工作区/第01章/03_去AI味润色稿.md": "sha256:7d5d68e4af4077ea4aade88c1d0672bc85995752e887ea3b3ab065c95dae20b2",
+        "设定/人物/": "sha256:2db8694ced4efe4a8ff7dd4402c74f1dbc3d983ad21515e780af71f71af0542f",
+        "设定/大纲/": "sha256:2fb5fca154d3876c56eeb32ac0343e023797b38e31dff4236d4ca9eed517f97b"
+      },
+      "outputs": [
+        "工作区/第01章/03_5_人设审查报告.md"
+      ],
+      "staleBecause": "产物文件尚未生成: 工作区/第01章/03_5_人设审查报告.md；上游节点 [zhuque_api_final] 处于 failed 状态",
+      "running": false,
+      "runningSince": null,
+      "model": "qmodel_38max",
+      "model_origin": "role-mapped",
+      "model_note": "角色 novel_persona_auditor 在宿主 qoder 由 role_models 绑定为 qmodel_38max，已忽略图谱里遗留的模型名 gemini-3.8-flash-high",
+      "subagent_type": "novel_persona_auditor"
     },
     "review_qc": {
       "kind": "agent",
       "role": "小说主编与防吃书质检员",
-      "status": "current",
+      "status": "blocked",
       "inputs": {
         "工作区/第01章/03_去AI味润色稿.md": "sha256:7d5d68e4af4077ea4aade88c1d0672bc85995752e887ea3b3ab065c95dae20b2",
         "设定/世界观/": "sha256:77e23b793c6f62ebf4af8ec00b9aa5c109bb9dd61d8f478c633a069ab75244f9",
@@ -67,20 +152,30 @@
       "outputs": [
         "工作区/第01章/04_盲审质检报告.md"
       ],
-      "staleBecause": null
+      "staleBecause": "上游节点 [audit_persona] 处于 blocked 状态",
+      "running": false,
+      "runningSince": null,
+      "model_origin": "host-unmapped",
+      "model_note": "宿主 qoder 未给角色 ?/档位 ? 配置模型；请编辑 subagents/manifest.json 的 host_profiles.qoder.role_models"
     },
     "author_accept": {
       "kind": "human",
       "role": null,
-      "status": "pending-human",
+      "status": "blocked",
       "inputs": {
+        "工作区/第01章/01_5_分场节拍表.md": null,
         "工作区/第01章/03_去AI味润色稿.md": "sha256:7d5d68e4af4077ea4aade88c1d0672bc85995752e887ea3b3ab065c95dae20b2",
+        "工作区/第01章/03_3_朱雀检测报告.md": "sha256:1cb7e5f54942c4dcf0fc9863d7f1fd29755a4dbb139cf95db2a0bc9ee0f1fa45",
+        "工作区/第01章/03_4_朱雀API终审报告.md": "sha256:e6f4ffa5778263cfb1f0437f6733338d87e20d097045e7817457cb4ee3ba8282",
+        "工作区/第01章/03_5_人设审查报告.md": null,
         "工作区/第01章/04_盲审质检报告.md": "sha256:2b7d3cdc56d4cfeae7940d517c3adeaa4f3d3e30af69329b483b505f970cd375"
       },
       "outputs": [
         "正文/第一卷/第01章_沉默信标.md"
       ],
-      "staleBecause": "请创作者审阅润色稿与审查打分，确认无误后点击放行入库为正式章节。",
+      "staleBecause": "输入文件缺失: 工作区/第01章/01_5_分场节拍表.md, 工作区/第01章/03_5_人设审查报告.md",
+      "running": false,
+      "runningSince": null,
       "ask": "请创作者审阅润色稿与审查打分，确认无误后点击放行入库为正式章节。",
       "ackAt": null
     },
@@ -94,7 +189,9 @@
       "outputs": [
         "工作区/第01章/05_章节统计.json"
       ],
-      "staleBecause": "上游节点 [author_accept] 处于 pending-human 状态"
+      "staleBecause": "上游节点 [author_accept] 处于 blocked 状态",
+      "running": false,
+      "runningSince": null
     }
   }
 }
