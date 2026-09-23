@@ -2,7 +2,7 @@
 """小说工业化项目脚手架生成器 (Scaffold Novel Project)。
 
 自动初始化符合标准工业化流水线规范的小说项目目录，包含：
-1. graph.yaml：包含 6 个典型节点的流水线 DAG 配置 (状态提取 -> 撰写初稿 -> 去AI润色 -> 审查打分 -> 人工放行 -> 统计分析)
+1. graph.yaml：引用唯一 chapter-v1 十节点模板（前情、分场、初稿、润色、双检测、人设、质检、人审、统计）
 2. 设定/世界观/：模块化世界观法度（法则、地理格局、科技奇物）
 3. 设定/人物/：主要人物小传、人际关系矩阵、角色知情状态表
 4. 设定/大纲/：全书三幕总纲、分卷细纲、伏笔与线索总台账
@@ -16,163 +16,9 @@ import argparse
 from pathlib import Path
 import yaml
 
-DEFAULT_GRAPH = {
-    "version": 1,
-    "name": "novel-chapter-pipeline",
-    "params": {
-        "chapter_num": 1,
-        "chapter_pad": "01",
-        "chapter_title": "沉默信标",
-        "volume_name": "第一卷",
-        "genre": "科幻悬疑",
-        "tone": "冷峻硬核、快节奏悬疑",
-        "target_words": 3200,
-    },
-    "nodes": {
-        "gather_state": {
-            "kind": "agent",
-            "role": "小说前置状态与伏笔总账员",
-            "prompt": (
-                "盘点本书当前的世界观规则、人物知情状态以及未回收伏笔。\n"
-                "提取第 {chapter_num} 章（{chapter_title}）必须推进的核心矛盾与读者信息差要点。\n"
-                "输出简明紧凑的章节任务上下文到指定路径。"
-            ),
-            "inputs": [
-                "设定/世界观/",
-                "设定/人物/",
-                "设定/大纲/",
-            ],
-            "outputs": [
-                "工作区/第{chapter_pad}章/01_状态上下文.md",
-            ],
-            "skills": [
-                "novel-context-curator",
-                "novel-clue-foreshadowing",
-                "novel-character-guardian",
-            ],
-            "assert": {
-                "min_words": 200,
-            },
-        },
-        "draft_chapter": {
-            "kind": "agent",
-            "after": ["gather_state"],
-            "role": "长篇小说主笔作家",
-            "prompt": (
-                "你是一位顶级职业小说家。请严格结合工作区/第{chapter_pad}章/01_状态上下文.md 的任务要点\n"
-                "与设定/大纲/中关于第 {chapter_num} 章剧情设定，撰写本章完整正文。\n"
-                "人物言行与性格必须严密符合设定/人物/中的档案，严禁突兀 OOC。\n"
-                "在正文末尾设立强烈的悬念钩子。"
-            ),
-            "skills": [
-                "novel-style-narrator",
-                "novel-scene-pacing",
-                "novel-opening-hook",
-                "novel-character-guardian",
-            ],
-            "inputs": [
-                "工作区/第{chapter_pad}章/01_状态上下文.md",
-                "设定/人物/",
-                "设定/世界观/",
-            ],
-            "outputs": [
-                "工作区/第{chapter_pad}章/02_正文初稿.md",
-            ],
-            "assert": {
-                "min_words": 2500,
-                "max_words": 4500,
-            },
-        },
-        "deai_polish": {
-            "kind": "agent",
-            "after": ["draft_chapter"],
-            "role": "去 AI 味与文风校准专家",
-            "prompt": (
-                "对照 资产/voice_sample.md 中的作者语言风格样本，对 工作区/第{chapter_pad}章/02_正文初稿.md 进行深度去 AI 味润色：\n"
-                "1. 剔除无意义的排比句、机械递进句、假大空抒情与说明文腔调；\n"
-                "2. 增强环境感官细节、微表情与短促有力的动作描写；\n"
-                "3. 将改写后的高质量定稿直接写出到指定文件。"
-            ),
-            "skills": [
-                "novel-deai-humanizer",
-                "novel-sensory-grounding",
-                "novel-anti-cliche",
-            ],
-            "inputs": [
-                "工作区/第{chapter_pad}章/02_正文初稿.md",
-                "资产/voice_sample.md",
-            ],
-            "outputs": [
-                "工作区/第{chapter_pad}章/03_去AI味润色稿.md",
-            ],
-            "assert": {
-                "min_words": 2400,
-            },
-        },
-        "review_qc": {
-            "kind": "agent",
-            "after": ["deai_polish"],
-            "role": "小说主编与防吃书质检员",
-            "prompt": (
-                "对 工作区/第{chapter_pad}章/03_去AI味润色稿.md 进行逐段盲审质检：\n"
-                "- 角色言行是否符合 设定/人物/（严查 OOC）；\n"
-                "- 力量体系与物理常识是否符合 设定/世界观/（严查吃书）；\n"
-                "- 情节节奏、爽点与章末追读力评估。\n"
-                "定位到具体句段给出修改建议，并在报告末尾严格输出一行格式：\n"
-                "SCORES: {\"overall\": 88, \"lore\": 92, \"ooc\": 90}"
-            ),
-            "skills": [
-                "novel-lore-enforcer",
-                "novel-consistency-auditor",
-                "novel-pacing-evaluator",
-            ],
-            "inputs": [
-                "工作区/第{chapter_pad}章/03_去AI味润色稿.md",
-                "设定/世界观/",
-                "设定/人物/",
-            ],
-            "outputs": [
-                "工作区/第{chapter_pad}章/04_盲审质检报告.md",
-            ],
-            "assert": {
-                "score_field": "overall",
-                "min_score": 80,
-            },
-        },
-        "author_accept": {
-            "kind": "human",
-            "after": ["review_qc"],
-            "ask": "请创作者审阅润色稿与审查打分，确认无误后点击放行入库为正式章节。",
-            "inputs": [
-                "工作区/第{chapter_pad}章/03_去AI味润色稿.md",
-                "工作区/第{chapter_pad}章/04_盲审质检报告.md",
-            ],
-            "outputs": [
-                "正文/{volume_name}/第{chapter_pad}章_{chapter_title}.md",
-            ],
-        },
-        "novel_stats": {
-            "kind": "command",
-            "after": ["author_accept"],
-            "run": [
-                "python",
-                "../../shared/novel_stats.py",
-                "--project",
-                ".",
-                "--chapter",
-                "正文/{volume_name}/第{chapter_pad}章_{chapter_title}.md",
-                "--output",
-                "工作区/第{chapter_pad}章/05_章节统计.json",
-            ],
-            "inputs": [
-                "正文/{volume_name}/第{chapter_pad}章_{chapter_title}.md",
-            ],
-            "outputs": [
-                "工作区/第{chapter_pad}章/05_章节统计.json",
-            ],
-        },
-    },
-}
+from chapter_templates import reference
+
+DEFAULT_GRAPH = reference()
 
 
 def scaffold_novel(project_dir: Path, title: str, genre: str, protagonist: str, logline: str) -> None:
@@ -190,10 +36,9 @@ def scaffold_novel(project_dir: Path, title: str, genre: str, protagonist: str, 
     for d in (world_dir, char_dir, outline_dir, assets_dir, chapters_dir, workspace_ch1_dir):
         d.mkdir(parents=True, exist_ok=True)
 
-    # 2. 写出 graph.yaml
-    graph_data = dict(DEFAULT_GRAPH)
+    # 2. 每个项目取得独立的唯一单章模板引用，不复制或维护另一套节点。
+    graph_data = reference(params={"genre": genre})
     graph_data["name"] = f"novel-{project_dir.name}"
-    graph_data["params"]["genre"] = genre
     with open(project_dir / "graph.yaml", "w", encoding="utf-8") as f:
         yaml.dump(graph_data, f, allow_unicode=True, sort_keys=False)
 

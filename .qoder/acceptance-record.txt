@@ -1,0 +1,44 @@
+工作台整体验收记录（层级生产改造 + 审查发现修复）
+日期：2026-09-24
+基线 HEAD：077cacb9f3405cef5612e8d675ded3c57fbe4b2b（全部改动未提交，按约定不提交）
+范围：D:/novelFlow 引擎与工作台；D:/桃园密码 只读核对。
+授权边界（逐字）：本轮只改引擎、准备四章任务，不生成正文、不覆盖旧稿，也不调用收费检测。
+
+一、最终验收结论：通过。
+全量回归 372 passed / 0 failed，exit=0（20分25秒，仓库根目录 python -m pytest shared -q）。
+前端 node:test 20/20（studio-runtime.test.js + studio-view.test.js，真实 studio.js 经 VM 加载）。
+浏览器结构验收 4/4 章真实鼠标导航；每章 10 节点 9 边，外层 3 边；四章 explore_context 模型一致 qfmodel；零页面错误；无外部请求；无小说节点执行。
+浏览器修复验收 15/15 步全过（临时副本项目，真实项目字节级零改动）。
+四章准备复核（只读）：ch051 pending / ch052-054 blocked；模板哈希 sha256:283c8d501a2724086015fc37fd551ee3c7661a8c469d0b64bcf5901c98267d2a 冻结不变；计划模型 flash×3（explore_context/scene_beats/draft_chapter=qfmodel）+ pro×3（deai_polish/audit_persona/review_qc=qmodel_38max）四章一致；actual_dispatch_verified=false（计划模型未被描述为实际派发已核验）；232 项旧文件哈希零改动；生产 state.json 不存在。
+
+二、审查发现处置（对照 final-review.txt 四项）：
+[P1] 归档并发覆盖作者正式稿 — 已修复并验证。
+修复：production.py 发布前守卫（读 old_bytes → _output_versions 与 last['output_baseline'] 及哈希比对 → 备份 → 复检 → _atomic 返回 published_stamp → finish 后再比对归档产物）；回滚仅当 _output_versions == published_version 才 unlink 或还原（CAS 所有权复检）。
+断言判据修正：测试原用整份 stat 相等，但 st_atime 会被任何读取改动（实现校验读它、断言前一行也要读它），永远无法稳定成立。改为 identity() 只比对 st_ino/st_dev/st_size/st_mtime_ns/st_ctime_ns——os.replace 覆盖会换 inode 并前移 mtime/ctime，回归力不受损。
+回归力红绿反向证明：临时禁用备份期复检（if False）→ 3 个参数化测试以正确数据丢失形态失败（作者稿被初稿覆盖、删除文件被重建）→ 恢复守卫 → 全过。
+[P2#2] 保存后展示与执行契约分叉 — 已修复并验证。
+修复：adoptSavedContract 采用服务端展开图（graph+production+章节 overrides），保存成功即重选当前节点刷新详情；inspectorDirty/viewLoading 守卫保证不覆盖响应期间的新输入（正常保存路径先清 dirty 再保存，响应期间输入会重置 dirty 阻止重填）。
+[P2#3] 阅读器缓存不随状态失效 — 已修复并验证。
+修复：readerEligibleFiles 资格集合 + readerListKey 列表键 + readerLoadVersion 在途读取作废三层机制；失效正式稿立刻离开阅读器（未保存手稿保留并提示自行复制）；资格集合变化则下次打开重建列表，新归档正式稿能进入；旧图（非生产）不受门控。
+[P2#4] 旧图保存删有效显式绑定 — 已修复并验证。
+修复：legacyGraphForSave 仅当 model_origin==='explicit-matched'（宿主采纳的无角色节点逃生舱）才保留 node.model；role-mapped 本就忽略遗留 model（剥离无害）；tier-mapped/no-host 值未生效（剥离避免把某宿主模型写死进跨宿主图谱）。
+
+三、验证方式与边界：
+- 全部 UI 修复用真实 studio.js（VM 加载）测试，非 mock 行为断言；浏览器验收用 Playwright chromium 真实鼠标事件，路由层拦截一切非本源请求。
+- 修复验收在临时目录副本项目（Temp/studio-verify-*）上进行，finally 字节级比对真实项目 D:/桃园密码 未动。
+- P1 复现沿用真实十节点/状态/锁/哈希/质量断言，仅外部命令边界 mock；未运行真实小说节点、未上传正文、未调用收费 API。
+- 全量回归与浏览器验收服务（8830 端口）均加载修复后代码（旧服务 03:08 启动早于 03:35 修复，已 kill 并以同命令行重启，PID 7128）。
+- 后台通知退出码两次不可信（管道 tail 假象），最终结论以日志 exit= 行与文件内容为准。
+
+四、遗留事项：
+- 引擎与工作台改动全部未提交（未 git add/commit/push，按约定）。
+- 8830 验收服务仍在运行（127.0.0.1:8830，绑定 D:/桃园密码 + interlude-production.yaml），供用户自行查看工作台。
+- 四章实际生产执行（会生成正文并调用朱雀收费检测）留待用户明确批准后进行。
+
+五、独立评审结论补充：
+原定后台独立评审子代理（agentId a00c5090b90e0f806）最终状态为 killed，未产出报告（其曾自行启动 pytest -q 于 04:46 后结束，无输出产物）。替代评审由主会话逐项对当前代码复核，四项要点全部通过：
+1. P2#4 legacyGraphForSave 的 state=null 回退安全：model_origin 只在宿主派发时写入 state，无 state 即从未派发，不存在"宿主已采纳的显式绑定"可保；且调用点（studio.js:1544）恒传 currentState，回退路径实际不可达。唯一调用点的生产分支走 chapterOverrides，不受影响。
+2. P2#2 adoptSavedContract 草稿保护正确：契约替换只动 currentGraph/currentProduction/chapterOverrides，草稿存于 DOM 输入框；in-flight 期间新编辑使 editVersion 前移，persistedEditVersion !== version 保持 graphDirty=true，且 inspectorDirty 守卫阻止 selectNode 重填；保存路径在写入时才读字段值并入 currentGraph.nodes[id]，契约替换后引用经 saveCurrentNodeFromInspector 重新解析，不产生旧对象写入。
+3. P2#3 阅读器竞态三层防护确认：syncReaderValidity 在 applyStateUpdate（studio.js:554）与完整 loadGraph（996）两条路径都调用；allowContextSwitch/navigateProduction 重置 readerListStale/readerListKey 并 readerLoadVersion++ 作废在途读取；loadFileContent 入场资格检查（1831）、await 后版本检查（1838）、await 后资格复查（1840）三重防线；openReaderModal 的 keep 仅保留仍合格文件，草稿丢弃必须经 confirm。
+4. P1 identity 断言回归力已由红绿反向证明（见第二节），当前 test_production.py:488-498 定义、543/603 行使用，与验证时一致。
+以上为对已通过测试与浏览器验收之外的代码级复核，未发现新问题。

@@ -1,0 +1,41 @@
+最终独立代码审查
+基线 HEAD：077cacb9f3405cef5612e8d675ded3c57fbe4b2b
+范围：D:/novelFlow 当前未提交工作树、任务4—7；只读核对 D:/桃园密码/interlude-production.yaml。
+
+规格符合结论：部分符合，尚不能通过最终验收。固定十节点、覆盖字段白名单、章节串行、attempt 代次、冻结模板/计划模型、生产接口与旧运行入口隔离均已落地；归档并发保护、保存后的展示一致性、阅读器失效处理及旧图有效模型绑定保留仍有缺陷。
+质量结论：不建议放行本轮引擎交付执行。发现1项P1数据丢失问题、3项P2功能/兼容问题；没有把风格建议计为阻塞。
+
+1. [P1，交付阻塞] 归档备份之后发生的作者正式稿修改被无声覆盖，且没有备份。
+位置：D:/novelFlow/shared/production.py:605-615；相关回滚路径627-632。
+原因：读取目标为old_bytes并写备份后，再次校验只检查源稿、上游、定义和绑定，没有比较正式目标与start的output_baseline/刚读到的old_bytes。随后_atomic(dst, source_bytes)覆盖并发修改，成功回执仍成立。回滚也无条件写回old_bytes，存在同类覆盖窗口。
+实际复现（仅临时目录）：复用 D:/novelFlow/shared/test_production.py 的 batch.__wrapped__ 与 run_to_review；所有command均由夹具mock。正式稿先写ORIGINAL，通过after_return(p._atomic, ...)在backups写入返回时将正式稿改为AUTHOR_EDIT_DURING_BACKUP，然后调用accept_node(..., confirmed=True)。
+实测输出：result="succeeded"；formal_is_new_output=true；backups=["ORIGINAL"]；author_concurrent_edit_retained=false。
+影响：真实作者保存的最新修改永久丢失。建议在发布/回滚前核对目标版本，遇到变化中止或保全最新版，增加目标文件并发编辑回归测试。现有归档测试只覆盖源稿/报告/清单变化，没有覆盖目标正式稿变化。
+
+2. [P2] 保存补充后，版本已更新但展开图未更新，静默刷新无法修复。
+位置：D:/novelFlow/shared/ui/studio.js:1539-1544、957-960；详情展示1383-1396。
+原因：保存响应包含服务器重新展开的graph，但客户端只采用revision、production与state，不更新currentGraph。之后同revision的静默loadGraph直接走applyStateUpdate并返回。详情仍展示旧prompt和旧inputs，而复制执行指令接口从磁盘读取新内容。
+实际复现：在Node VM中运行原studio.js，只在内存暴露闭包函数，DOM/fetch均模拟。初始展开图prompt="BASE\nOLD"、inputs=["old.txt"]；保存响应graph为"BASE\nNEW"、["new.txt"]、revision=r2。saveGraphToServer与随后静默loadGraph均返回true，但currentGraph仍为OLD/old.txt，revision=r2且graphDirty=false。
+影响：用户看到保存成功后，查看的任务契约与实际执行契约不一致。应在不覆盖进行中的新编辑前提下采用服务器规范化图，或安排强制重载。
+
+3. [P2] 阅读器缓存不跟随生产状态变化；已过期正式稿仍持续显示，新增归档也不会进入文件列表。
+位置：D:/novelFlow/shared/ui/studio.js:1702-1704、519-548、1002-1008、1758-1775。
+原因：一旦currentReadingFile有值，再次打开阅读器直接返回；状态刷新只更新画布/检查器，显式图刷新也仅在readerDirty时清理阅读器。生产阅读器只读，因此通常永远不会触发该清理。productionOutputs对human成功状态的过滤仅在重新构建列表/主动点击读取时生效。
+实际复现：同一内存VM加载author_accept=succeeded、attempt_count=1的正式稿；调用真实applyStateUpdate把该节点改为stale，再次openReaderModal。结果reading仍为"正文/51.md"，text仍为"FORMAL_FROM_PREVIOUS_SUCCESS"，无失效提示/清理。相反，在归档前打开阅读器后，即使归档成功，关闭重开也不重建列表，正式稿仍不出现。
+影响：不满足“旧正式稿不能冒充当前有效产物”和刷新一致性要求。需在状态/产物资格变化时更新列表，并清理或明确标识已失效内容。
+
+4. [P2] 旧图普通保存删除有效显式模型绑定，导致静默换模型。
+位置：D:/novelFlow/shared/ui/studio-view.js:91-94；调用 D:/novelFlow/shared/ui/studio.js:1520；解析语义 D:/novelFlow/shared/subagent_registry.py:197-218。
+原因：legacyGraphForSave无条件删除所有node.model。但无subagent_type的旧节点可以使用宿主认可的显式model，resolve_node_model会优先采用它；这不是无效的历史Gemini残值。
+实际复现：将{kind:"agent", model:"qmodel_38max", model_tier:"flash", role:"writer"}传给真实legacyGraphForSave，再分别调用resolve_node_model(...,"qoder")。保存前model=qmodel_38max、origin=explicit-matched；保存后model=qfmodel、origin=tier-mapped。未进行任何模型派发。
+影响：修改提示词等无关属性也会改变下一次执行模型。模型控件只读不应意味着删除已生效的旧图配置；应保留原绑定，或显式迁移并告知。
+
+验证与边界
+- 已直接Read全部指定未跟踪实现及测试，并检查当前差异；HEAD与指定基线一致。
+- 当前server._graph_snapshot确实从同一raw把source.chapters对象填入state.production；launcher会话请求上限30秒且受总deadline约束。没有把这两项已修问题重复报告。
+- 本次执行前端纯函数测试13/13通过，studio.js与studio-view.js的node --check通过。
+- 归档问题在TemporaryDirectory中复现，沿用真实十节点、状态、锁、哈希、质量断言，仅外部命令边界mock；没有运行真实小说节点或收费API。
+- UI问题使用真实脚本的内存VM和模拟DOM/API复现，不声称进行了真实浏览器视觉验收。
+- 只读比对D:/桃园密码的232项旧文件基线，changed=[]；生产state.json仍不存在；清单快照与当前chapter-v1模板相同。51回响、52同行、53问道、54引信及原归档文件名均保留。
+- 未重跑全量pytest，也未把用户提供的341/18/71通过结果冒称为本次复跑结果。
+- 未提交、未修改实现/权限/AGENTS/配置、未派生子代理；工作树唯一新增写入为本报告。

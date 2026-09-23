@@ -458,37 +458,28 @@ nodes:
         assert vol_state3.get("running_node") is None
 
 
-def test_demo_novel_graph_single_core_skill_and_scene_beats():
-    """验证 demo-novel 的工作流配置严格遵守 1 节点 = 1 专属核心 Skill，且 scene_beats 成功解耦。"""
+def test_demo_novel_uses_complete_template_and_volume_keeps_its_skills():
+    """demo 从唯一模板得到完整链路；分卷流程保持原有契约。"""
     demo_dir = Path("projects/demo-novel")
     if not demo_dir.exists():
         pytest.skip("projects/demo-novel not found")
 
     ch_graph = load_graph((demo_dir / "graph.yaml").read_text(encoding="utf-8"))
     nodes = ch_graph["nodes"]
+    chain = ['explore_context', 'scene_beats', 'draft_chapter', 'deai_polish',
+             'check_zhuque', 'zhuque_api_final', 'audit_persona', 'review_qc',
+             'author_accept', 'novel_stats']
+    assert list(nodes) == chain
+    for i, nid in enumerate(chain):
+        assert nodes[nid].get('after', []) == ([] if i == 0 else [chain[i - 1]])
+    assert nodes['scene_beats']['outputs'][0] in nodes['draft_chapter']['inputs']
+    assert nodes['author_accept']['inputs'][0] == nodes['deai_polish']['outputs'][0]
+    for node in nodes.values():
+        if node['kind'] == 'agent':
+            assert node['skills']
+            assert 'model' not in node
 
-    # 1. 验证 scene_beats 解耦
-    assert "scene_beats" in nodes
-    assert nodes["scene_beats"]["after"] == ["gather_state"]
-    assert nodes["draft_chapter"]["after"] == ["scene_beats"]
-    assert "工作区/第{chapter_pad}章/01_5_分场节拍表.md" in nodes["scene_beats"]["outputs"]
-    assert "工作区/第{chapter_pad}章/01_5_分场节拍表.md" in nodes["draft_chapter"]["inputs"]
-
-    # 2. 验证每个 agent 节点严格具备且仅具备 1 个专属核心 Skill
-    expected_ch_skills = {
-        "gather_state": "novel-context-curator",
-        "scene_beats": "novel-scene-tension",
-        "draft_chapter": "novel-style-narrator",
-        "deai_polish": "novel-deai-humanizer",
-        "audit_persona": "novel-character-guardian",
-        "review_qc": "novel-editorial-reviewer",
-    }
-    for node_id, exp_skill in expected_ch_skills.items():
-        skills = nodes[node_id].get("skills", [])
-        assert len(skills) == 1, f"节点 [{node_id}] 的 skills 数量应为 1，实际为 {skills}"
-        assert skills[0] == exp_skill, f"节点 [{node_id}] 应分配技能 {exp_skill}，实际为 {skills[0]}"
-
-    # 3. 验证 volume_graph.yaml 同样严格单 Skill 映射
+    # 分卷尚未迁移，仍验证其原有核心 Skill 映射。
     vol_graph = load_graph((demo_dir / "volume_graph.yaml").read_text(encoding="utf-8"))
     vol_nodes = vol_graph["nodes"]
     expected_vol_skills = {

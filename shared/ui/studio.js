@@ -162,7 +162,25 @@
   let saveConflict = false;
   let persistedEditVersion = 0;
   let readerLoadVersion = 0;
+  let readerListStale = false;
+  let readerListKey = null;
   let explicitChapter = null;
+  const view = window.StudioView;
+  let currentProduction = null;
+  let currentInstance = null;
+  let contextVersion = 0;
+  let viewLoading = false;
+  let chapterOverrides = {};
+  const fieldPromptAppend = document.getElementById('fieldPromptAppend');
+  const fieldInputsAdd = document.getElementById('fieldInputsAdd');
+
+  function viewPolicy() {
+    return view.viewPolicy(currentGraph, currentProduction, currentInstance, !!boundContext);
+  }
+
+  function isProduction() {
+    return viewPolicy().structureReadonly;
+  }
 
   function projectRequestValue() {
     return boundContext ? boundContext.project_path : currentProject;
@@ -170,8 +188,9 @@
 
   function contextQuery(targetChapter = explicitChapter) {
     const query = new URLSearchParams({ project: projectRequestValue(), workflow: currentWorkflow });
-    // 绑定服务自己的 chapter 是唯一来源；旧入口只在用户明确切换时覆盖。
-    if (!boundContext && targetChapter !== null) query.set('chapter', targetChapter);
+    if (currentInstance) query.set('instance', currentInstance);
+    // 生产任务章节由实例决定，绑定服务的旧 chapter 不能覆盖实例。
+    if (!isProduction() && !boundContext && targetChapter !== null) query.set('chapter', targetChapter);
     return query.toString();
   }
 
@@ -208,8 +227,9 @@
       Array.from(document.querySelectorAll('.modal-backdrop')).some(el => !el.classList.contains('hidden'));
   }
 
-  function markInspectorDirty() {
-    if (!selectedNodeId) return;
+  function markInspectorDirty(event) {
+    if (!selectedNodeId || viewLoading || event?.target?.readOnly || event?.target?.disabled) return;
+    if (isProduction() && ![fieldPromptAppend, fieldInputsAdd].includes(event?.target)) return;
     inspectorDirty = true;
     editVersion++;
   }
@@ -221,21 +241,130 @@
   }
 
   function allowContextSwitch() {
-    if (!uiReady || boundContext) return false;
+    if (!uiReady || boundContext || viewLoading) return false;
     if (pendingSaves) { showSyncNotice('请等待配置保存完成后再切换。'); return false; }
     if (hasUnsavedChanges() && !confirm('切换目标会丢弃未保存的配置与文件编辑，确定继续吗？')) return false;
     graphDirty = inspectorDirty = readerDirty = false;
     pendingGraphRefresh = false;
+    contextVersion++;
+    graphLoadVersion++;
     currentReadingFile = '';
     readerLoadVersion++;
+    readerListStale = false;
+    readerListKey = null;
     readerModal.classList.add('hidden');
     selectedNodeId = null;
     inspectorDrawer.classList.remove('open');
-    currentGraph = null;
+    currentGraph = currentState = currentProduction = null;
+    currentInstance = null;
+    chapterOverrides = {};
     graphRevision = null;
     nodesLayer.innerHTML = '';
     renderEdges();
     return true;
+  }
+
+  async function navigateProduction(instance) {
+    if (!uiReady || viewLoading || instance === currentInstance || !view.canNavigate(currentProduction, instance)) return;
+    if (pendingSaves) { showSyncNotice('请等待本章补充保存完成后再切换层级。'); return; }
+    if (hasUnsavedChanges()) {
+      showSyncNotice('草稿已保留：请先保存本章补充再切换；如需丢弃，请点击重新载入并明确确认。');
+      return;
+    }
+    const previous = { instance: currentInstance, graph: currentGraph, state: currentState, production: currentProduction,
+      revision: graphRevision, overrides: chapterOverrides, chapter: currentChapter, positions: nodePositions, zoom, panX, panY };
+    viewLoading = true;
+    contextVersion++;
+    graphLoadVersion++;
+    currentInstance = instance;
+    currentGraph = currentState = null;
+    selectedNodeId = null;
+    currentReadingFile = '';
+    readerLoadVersion++;
+    readerListStale = false;
+    readerListKey = null;
+    readerModal.classList.add('hidden');
+    inspectorDrawer.classList.remove('open');
+    pendingGraphRefresh = false;
+    cancelConnect();
+    draggingNodeId = null;
+    isPanning = false;
+    nodesLayer.innerHTML = '';
+    renderEdges();
+    const main = document.querySelector('.studio-main');
+    main.inert = true;
+    main.setAttribute('aria-busy', 'true');
+    try {
+      zoom = 1; panX = 20; panY = 20;
+      if (!await loadGraph(currentProject)) throw new Error('层级载入被中断，请重试');
+      await waitForGraphPaint();
+    } catch (error) {
+      contextVersion++;
+      graphLoadVersion++;
+      currentInstance = previous.instance;
+      currentGraph = previous.graph;
+      currentState = previous.state;
+      currentProduction = previous.production;
+      graphRevision = previous.revision;
+      chapterOverrides = previous.overrides;
+      currentChapter = previous.chapter;
+      nodePositions = previous.positions;
+      zoom = previous.zoom; panX = previous.panX; panY = previous.panY;
+      renderGraph();
+      reportSyncError(error);
+    } finally {
+      viewLoading = false;
+      main.inert = false;
+      main.setAttribute('aria-busy', 'false');
+      updateViewControls();
+      scheduleStateRefresh();
+    }
+  }
+
+  function updateViewControls() {
+    const policy = viewPolicy();
+    const production = policy.structureReadonly;
+    document.body.classList.toggle('studio-production', production);
+    document.getElementById('productionBreadcrumb').classList.toggle('hidden', !production);
+    const root = document.getElementById('btnProductionRoot');
+    root.textContent = currentProduction?.name || currentProduction?.id || '生产任务';
+    root.disabled = !currentInstance || viewLoading;
+    const chapter = currentProduction?.chapters?.find(ch => ch.id === currentInstance);
+    const chapterNumber = chapter?.params?.chapter ?? currentGraph?.params?.chapter ?? currentChapter;
+    document.getElementById('productionCurrent').textContent = currentInstance
+      ? ` / 第${chapterNumber ?? ''}章 · ${currentInstance}` : ' / 章节总览';
+    document.getElementById('productionSummary').textContent = currentInstance
+      ? `${Object.keys(currentGraph?.nodes || {}).length} 节点标准流程只读 · 仅可编辑本章补充`
+      : `${currentProduction?.chapters?.length || 0} 章 · 按顺序串行 · 点击章节进入标准流程`;
+    document.getElementById('productionSummary').title = [currentProduction?.template_id, currentProduction?.template_hash,
+      currentProduction?.binding_host].filter(Boolean).join(' · ');
+    if (boundContext) {
+      document.getElementById('boundStudioContext').textContent = [boundContext.bound_project, currentWorkflow,
+        production ? (currentInstance || '章节总览') : (currentChapter == null ? '' : `章节 ${currentChapter}`),
+        boundContext.project_path].filter(Boolean).join(' · ');
+    }
+    chapterSelectorGroup.classList.toggle('hidden', production);
+    [btnOpenAddNodeModal, btnConfirmAddNode, btnDeleteNode, selectAvailableSkill,
+      btnAddSystemSkill, inputCustomSkill, btnAddCustomSkill].forEach(el => { el.disabled = production || viewLoading; });
+    [fieldRole, fieldPrompt, fieldRun, fieldAsk, fieldInputs, fieldOutputs,
+      fieldAssertMinWords, fieldAssertMaxWords, fieldAssertMinScore, fieldAssertScoreField].forEach(el => { el.readOnly = production; });
+    selectNodeModel.disabled = true;
+    fieldModel.readOnly = true;
+    fieldModel.disabled = false;
+    btnDispatchHost.disabled = !policy.canRun;
+    btnReconcile.disabled = !policy.canRun;
+    btnCopyPrompt.disabled = production ? !policy.canEditSupplements : !!boundContext;
+    btnSaveGraph.disabled = viewLoading || (production && !policy.canEditSupplements);
+    btnSaveGraph.textContent = production ? '保存本章补充' : '保存配置';
+    btnSaveGraph.title = production ? '仅保存本章 overrides，不写回展开图谱' : '保存工作流配置';
+    btnSaveNode.disabled = production && !policy.canEditSupplements;
+    btnSaveNode.textContent = production ? '保存本章补充' : '保存修改';
+    document.querySelector('label[for="fieldPrompt"]').textContent = production ? '基础提示词（只读）:' : '核心任务指令 (Prompt):';
+    document.getElementById('productionOverrides').classList.toggle('hidden', !policy.canEditSupplements);
+    fieldPromptAppend.disabled = !policy.canEditSupplements || currentGraph?.nodes[selectedNodeId]?.kind !== 'agent';
+    fieldInputsAdd.disabled = !policy.canEditSupplements;
+    readerTextarea.readOnly = production;
+    btnSaveReaderContent.disabled = production || !currentReadingFile;
   }
 
   function deferGraphRefresh() {
@@ -252,7 +381,7 @@
   }
 
   async function flushGraphRefresh() {
-    if (!uiReady || !pendingGraphRefresh || graphRefreshInFlight) return;
+    if (!uiReady || viewLoading || !pendingGraphRefresh || graphRefreshInFlight) return;
     if (graphRefreshBlocked()) {
       deferGraphRefresh();
       return;
@@ -275,18 +404,16 @@
   }
 
   async function refreshState() {
-    if (!uiReady || !currentProject) return;
+    if (!uiReady || !currentProject || viewLoading || !currentGraph) return;
     if (stateRefreshInFlight) { stateRefreshAgain = true; return; }
     const query = contextQuery();
-    const loadedVersion = graphLoadVersion;
+    const requestView = { query, contextVersion, graphLoadVersion };
+    const revisionAtStart = graphRevision;
     stateRefreshInFlight = true;
     try {
       const data = await requestJson(`/api/state?${query}`);
-      if (query !== contextQuery() || loadedVersion !== graphLoadVersion) return;
-      if (data.revision !== graphRevision) {
-        scheduleGraphRefresh();
-        return;
-      }
+      if (!view.responseMatches(requestView, { query: contextQuery(), contextVersion, graphLoadVersion }) || revisionAtStart !== graphRevision) return;
+      if (data.revision !== graphRevision) scheduleGraphRefresh();
       applyStateUpdate(data);
     } finally {
       stateRefreshInFlight = false;
@@ -295,28 +422,12 @@
   }
 
   function eventMatchesContext(data) {
-    if (data.workflow !== currentWorkflow) return false;
-    if (boundContext) {
-      return data.project === boundContext.bound_project && data.path === boundContext.project_path;
-    }
-    return data.project === currentProject || data.path === currentProject;
+    return view.eventMatchesContext(data, currentWorkflow, boundContext, currentProject);
   }
 
   function formatModelShort(model) {
-    if (!model) return '🤖 未指定模型';
-    const m = model.toLowerCase();
-    // Qoder 系统模型内部名 + BYOK slug 与显示名对照 (见 docs/qoder-model-routing.md)
-    if (m === 'qfmodel' || m.includes('qwen')) return '⚡ Qwen 3.8 Flash';
-    if (m === 'qmodel_38max') return '⚡ Qwen 3.8 Max';
-    if (m === 'kmodel_latest' || m.includes('kimi')) return '🔍 Kimi K3';
-    if (m === 'kmodel') return '🔍 Kimi K2.7 Code';
-    if (m.includes('opus')) return '🧠 Claude Opus 4.6 (Thinking)';
-    if (m.includes('sonnet')) return '🧠 Claude 3.7 Sonnet (Thinking)';
-    if (m === 'gemini-3.8-flash-high') return '⚡ Gemini 3.8 Flash (High)';
-    if (m === 'gemini-3.8-flash-medium') return '⚡ Gemini 3.8 Flash (Medium)';
-    if (m === 'gemini-3.8-flash-low') return '⚡ Gemini 3.8 Flash (Low)';
-    if (m.includes('gemini') || m.includes('flash')) return '⚡ Gemini 3.8 Flash';
-    return `🤖 ${model.length > 25 ? model.substring(0, 23) + '..' : model}`;
+    // 展示服务端原值，不根据家族名称猜测版本或档位。
+    return model || '未配置';
   }
 
   function getModelClass(model) {
@@ -350,10 +461,9 @@
     nameEl.textContent = hostDisplayName();
   }
 
-  // 取节点的"实际执行模型"：状态文件中的宿主解析结果优先，图谱原始声明兜底
-  function getResolvedModel(id, node) {
-    const stateEntry = (currentState && currentState.nodes) ? currentState.nodes[id] : null;
-    return (stateEntry && stateEntry.model) ? stateEntry.model : node.model;
+  // 计划模型唯一来源为状态解析结果；没有值就明确未配置。
+  function getResolvedModel(id) {
+    return view.getResolvedModel(getStateEntry(id));
   }
 
   function getStateEntry(id) {
@@ -361,17 +471,55 @@
   }
 
   function nodeStatus(id) {
+    return view.statusPresentation(getStateEntry(id), isProduction()).status;
+  }
+
+  function statusReason(entry) {
+    const reason = entry?.staleBecause || entry?.blockedBecause || '';
+    return typeof reason === 'string' ? reason : JSON.stringify(reason);
+  }
+
+  function cardStatusText(id) {
     const entry = getStateEntry(id);
-    return entry && (entry.running || entry.status === 'running') ? 'running' : (entry?.status || 'stale');
+    const label = view.statusPresentation(entry, isProduction()).label;
+    if (currentGraph?.nodes[id]?.kind !== 'subworkflow') return label;
+    return `${label} · ${entry?.completed ?? 0}/${entry?.total ?? 0} 已完成`;
+  }
+
+  function chapterActivity(id) {
+    const entry = getStateEntry(id);
+    const active = entry?.active_node;
+    return [active ? `当前节点：${active}` : '', statusReason(entry)].filter(Boolean).join(' · ');
+  }
+
+  function modelBadgeHtml(id) {
+    const model = getResolvedModel(id);
+    const info = view.modelPresentation(getStateEntry(id));
+    return `<span class="node-model-chip ${getModelClass(model)}" title="计划模型：${escapeHtml(info.planned)}">计划模型：${escapeHtml(formatModelShort(model))}</span>` +
+      `<span class="model-actual-note">${escapeHtml(info.actual)}</span>`;
+  }
+
+  function updateInspectorModel() {
+    if (currentGraph?.nodes[selectedNodeId]?.kind !== 'agent') return;
+    const info = view.modelPresentation(getStateEntry(selectedNodeId));
+    const model = getResolvedModel(selectedNodeId);
+    selectNodeModel.replaceChildren(new Option(info.planned, model || ''));
+    selectNodeModel.disabled = true;
+    fieldModel.value = model || '';
+    fieldModel.readOnly = true;
+    const adapt = document.getElementById('inspectorModelAdapt');
+    adapt.textContent = [info.actual, info.note].filter(Boolean).join(' · ');
+    adapt.classList.remove('hidden');
   }
 
   function updateInspectorStatus() {
     if (!selectedNodeId) return;
     const entry = getStateEntry(selectedNodeId);
-    const status = nodeStatus(selectedNodeId);
-    inspectorStatusPill.textContent = status === 'running' ? '正在运行中...' : status;
+    const { status, label } = view.statusPresentation(entry, isProduction());
+    inspectorStatusPill.textContent = label;
     inspectorStatusPill.className = `status-pill status-${status}`;
-    inspectorStatusReason.textContent = entry?.staleBecause || (status === 'running' ? '智能体任务正在执行中...' : '');
+    inspectorStatusReason.textContent = [statusReason(entry), entry?.attempt_count !== undefined ? `尝试次数：${entry.attempt_count}` : ''].filter(Boolean).join(' · ');
+    updateInspectorModel();
   }
 
   function applyStateUpdate(data) {
@@ -387,7 +535,13 @@
       card.classList.add(`status-${status}`);
       const indicator = card.querySelector('.status-indicator');
       indicator.className = `status-indicator ${status}`;
-      indicator.title = `节点状态: ${status}`;
+      indicator.title = view.statusPresentation(getStateEntry(id), isProduction()).label;
+      const statusText = card.querySelector('.node-status-text');
+      if (statusText) statusText.textContent = cardStatusText(id);
+      const activity = card.querySelector('.chapter-activity');
+      if (activity) activity.textContent = chapterActivity(id);
+      const modelRow = card.querySelector('.node-model-row');
+      if (modelRow) modelRow.innerHTML = modelBadgeHtml(id);
       let badge = card.querySelector('.node-running-badge');
       if (status === 'running' && !badge) {
         badge = document.createElement('div');
@@ -397,6 +551,7 @@
       } else if (status !== 'running' && badge) badge.remove();
     });
     updateInspectorStatus();
+    syncReaderValidity();
     renderEdges();
   }
 
@@ -533,7 +688,8 @@
         document.body.classList.add('studio-bound');
         document.getElementById('boundStudioNotice').classList.remove('hidden');
         document.getElementById('boundModelNote').classList.remove('hidden');
-        document.getElementById('boundStudioContext').textContent = `${health.bound_project} · ${health.workflow} · 章节 ${health.chapter} · ${health.project_path}`;
+        document.getElementById('boundStudioContext').textContent = [health.bound_project, health.workflow,
+          health.chapter == null ? '章节总览' : `章节 ${health.chapter}`, health.project_path].join(' · ');
         [projectSelect, workflowSelect, chapterInput, btnPrevChapter, btnNextChapter,
           btnOpenNewProjectModal, btnOpenAddPathModal, btnDispatchHost, btnCopyPrompt,
           btnReconcile, selectNodeModel, fieldModel].forEach(el => { el.disabled = true; });
@@ -555,7 +711,13 @@
       await fetchAvailableSkills();
       if (boundContext) await loadGraph(currentProject);
       else await loadProjects();
+      // 先显示真实图，再等待绘制并报告 ready；控件仍 inert，回执不等于执行授权。
+      document.body.classList.remove('studio-loading');
+      document.getElementById('studioLoadingOverlay').classList.add('hidden');
       await waitForGraphPaint();
+      if (isProduction() && (currentInstance !== null || currentGraph?.kind !== 'production')) {
+        throw new Error('生产任务必须先完成章节总览绘制');
+      }
       if (boundContext) {
         const ready = await requestJson('/api/ui/ready', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -573,6 +735,7 @@
       initLiveWebSocket();
     } catch (error) {
       const overlay = document.getElementById('studioLoadingOverlay');
+      overlay.classList.remove('hidden');
       overlay.classList.add('has-error');
       document.getElementById('studioLoadingTitle').textContent = '工作台尚未就绪';
       document.getElementById('studioLoadingMessage').textContent = `${error.message}。请刷新重试；会话失效时请从主对话重新打开。`;
@@ -591,7 +754,7 @@
       return; // 旧入口允许空项目列表。
     }
     const ids = Object.keys(currentGraph.nodes);
-    const expectedEdges = ids.reduce((count, id) => count + (currentGraph.nodes[id].after || []).length, 0);
+    const expectedEdges = ids.reduce((count, id) => count + view.displayAfter(currentGraph, currentProduction, id).length, 0);
     const cards = nodesLayer.querySelectorAll('.node-card');
     const paths = edgesGroup.querySelectorAll('.edge-path');
     if (cards.length !== ids.length || paths.length !== expectedEdges ||
@@ -661,6 +824,7 @@
         <span class="skill-tag-del" title="移除该技能">&times;</span>
       `;
 
+      badge.querySelector('.skill-tag-del').classList.toggle('hidden', isProduction());
       badge.querySelector('.skill-tag-del').addEventListener('click', (e) => {
         e.stopPropagation();
         removeSkillFromCurrentNode(sid);
@@ -671,7 +835,7 @@
   }
 
   function addSkillToCurrentNode(skillId) {
-    if (!selectedNodeId || !currentGraph || !currentGraph.nodes || !currentGraph.nodes[selectedNodeId]) return;
+    if (isProduction() || viewLoading || !selectedNodeId || !currentGraph || !currentGraph.nodes || !currentGraph.nodes[selectedNodeId]) return;
     const node = currentGraph.nodes[selectedNodeId];
     if (!node.skills) node.skills = [];
     if (!node.skills.includes(skillId)) {
@@ -684,7 +848,7 @@
   }
 
   function removeSkillFromCurrentNode(skillId) {
-    if (!selectedNodeId || !currentGraph || !currentGraph.nodes || !currentGraph.nodes[selectedNodeId]) return;
+    if (isProduction() || viewLoading || !selectedNodeId || !currentGraph || !currentGraph.nodes || !currentGraph.nodes[selectedNodeId]) return;
     const node = currentGraph.nodes[selectedNodeId];
     if (!node.skills) return;
     node.skills = node.skills.filter(s => s !== skillId);
@@ -696,8 +860,10 @@
 
   async function loadWorkflows(projectSlug) {
     if (!workflowSelect || !projectSlug) return;
+    const contextAtStart = contextVersion;
     try {
       const data = await requestJson(`/api/workflows?project=${encodeURIComponent(projectSlug)}`);
+      if (contextAtStart !== contextVersion || projectSlug !== currentProject) return;
       if (data.workflows && data.workflows.length > 0) {
         workflowSelect.innerHTML = '';
         data.workflows.forEach(wf => {
@@ -771,21 +937,26 @@
     if (!projectSlug) return false;
     if (boundContext && (projectSlug !== boundContext.bound_project || targetChapter !== null)) return false;
     if (silent && graphRefreshBlocked()) { deferGraphRefresh(); return false; }
-    const loadVersion = ++graphLoadVersion;
+    graphLoadVersion++;
     const editAtStart = editVersion;
     const requestedChapter = targetChapter === null ? explicitChapter : parseInt(targetChapter, 10);
     const query = contextQuery(requestedChapter);
+    const requestView = { query, contextVersion, graphLoadVersion };
     const data = await requestJson(`/api/graph?${query}`);
-    if (loadVersion !== graphLoadVersion || projectSlug !== currentProject) return false;
+    if (projectSlug !== currentProject || !view.responseMatches(requestView,
+      { query: contextQuery(requestedChapter), contextVersion, graphLoadVersion })) return false;
     // 请求期间开始输入或拖拽，同样不能用迟到的响应覆盖编辑。
     if (uiReady && (editAtStart !== editVersion || pendingSaves || (silent && graphRefreshBlocked()))) {
       deferGraphRefresh();
       return false;
     }
-    if (!data.hasGraph || !data.graph) {
-      if (boundContext) throw new Error(`工作流 ${currentWorkflow} 不存在或不可读取`);
+    if (data.hasGraph === false || !data.graph) {
+      if (boundContext || isProduction()) throw new Error(`工作流 ${currentWorkflow} 不存在或不可读取`);
       data.graph = { version: 1, name: projectSlug, nodes: {} };
     }
+    if ((data.graph.kind === 'production' || currentInstance) && !data.production) throw new Error('生产任务上下文缺失');
+    if (data.production && ((data.production.instance ?? null) !== currentInstance ||
+        (currentInstance && !view.canNavigate(data.production, currentInstance)))) throw new Error('响应章节与当前实例不匹配');
     if (!data.graph.nodes || typeof data.graph.nodes !== 'object' || Array.isArray(data.graph.nodes)) {
       throw new Error('工作流节点结构无效');
     }
@@ -796,29 +967,39 @@
       return true;
     }
     currentGraph = data.graph;
+    currentProduction = data.production || null;
+    chapterOverrides = JSON.parse(JSON.stringify(currentProduction?.chapters?.find(ch => ch.id === currentInstance)?.overrides || {}));
     graphRevision = data.revision || null;
-    explicitChapter = requestedChapter;
+    explicitChapter = isProduction() ? null : requestedChapter;
     currentState = data.state || null;
     if (data.host !== undefined) { detectedHost = data.host || null; updateHostBadge(); }
     const isVolume = currentWorkflow.includes('volume');
-    currentChapter = boundContext ? boundContext.chapter :
-      (isVolume ? data.currentVolume : data.currentChapter) ?? requestedChapter ?? currentChapter;
-    chapterInput.value = currentChapter;
+    currentChapter = isProduction() ? (data.currentChapter ?? currentGraph.params?.chapter ?? null) :
+      boundContext ? boundContext.chapter : (isVolume ? data.currentVolume : data.currentChapter) ?? requestedChapter ?? currentChapter;
+    chapterInput.value = currentChapter ?? '';
     updateChapterSelectorUI();
+    updateViewControls();
     graphDirty = false;
     inspectorDirty = false;
     saveConflict = false;
-    const posKey = `${projectRequestValue()}::${currentWorkflow}`;
+    const posKey = view.layoutKey(projectRequestValue(), currentWorkflow, currentInstance);
     nodePositions = workflowPositions[posKey] || (workflowPositions[posKey] = {});
     if (Object.keys(currentGraph.nodes).some(id => !nodePositions[id])) autoComputeLayout();
+    if (currentGraph.kind === 'production') {
+      const right = Math.max(250, ...Object.keys(currentGraph.nodes).map(id => nodePositions[id].x + 250));
+      zoom = Math.min(1, Math.max(0.4, (canvasViewport.clientWidth - 80) / right));
+      panX = 30; panY = 20;
+    }
     renderGraph();
     if (selectedNodeId && currentGraph.nodes[selectedNodeId]) selectNode(selectedNodeId, true);
     else { selectedNodeId = null; inspectorDrawer.classList.remove('open'); }
+    syncReaderValidity();
     if (!pendingGraphRefresh) document.getElementById('studioSyncNotice').classList.add('hidden');
     return true;
   }
 
   async function refreshGraphExplicitly() {
+    if (viewLoading) return;
     if (pendingSaves) { showSyncNotice('正在保存配置，请等待保存结束后再刷新。'); return; }
     if (hasUnsavedChanges() && !confirm('重新载入将丢弃未保存的节点配置和文件编辑。确定从磁盘重新载入吗？')) return;
     const original = btnRefreshStatus.innerHTML;
@@ -854,7 +1035,7 @@
     // 简单松弛计算层级
     for (let i = 0; i < nodeIds.length; i++) {
       nodeIds.forEach(id => {
-        const after = nodes[id].after || [];
+        const after = view.displayAfter(currentGraph, currentProduction, id);
         after.forEach(dep => {
           if (levels[dep] !== undefined) {
             levels[id] = Math.max(levels[id], levels[dep] + 1);
@@ -872,7 +1053,7 @@
     });
 
     const colWidth = 320;
-    const rowHeight = 150;
+    const rowHeight = 250;
     const startX = 60;
     const startY = 80;
 
@@ -899,40 +1080,37 @@
     Object.keys(nodes).forEach(id => {
       const node = nodes[id];
       const pos = nodePositions[id] || { x: 100, y: 100 };
-      const stateEntry = (currentState && currentState.nodes) ? currentState.nodes[id] : null;
-      const rawStatus = stateEntry ? stateEntry.status : 'stale';
-      const isRunning = (rawStatus === 'running') || (stateEntry && stateEntry.running);
-      const status = isRunning ? 'running' : rawStatus;
+      const status = nodeStatus(id);
+      const isRunning = status === 'running';
+      const isChapter = node.kind === 'subworkflow' && isProduction();
 
       const card = document.createElement('div');
-      card.className = `node-card status-${status} ${selectedNodeId === id ? 'selected' : ''}`;
+      card.className = `node-card status-${status} ${isChapter ? 'chapter-card' : ''} ${selectedNodeId === id ? 'selected' : ''}`;
       card.id = `node-${id}`;
       card.style.transform = `translate(${pos.x}px, ${pos.y}px)`;
+      card.tabIndex = 0;
+      card.setAttribute('role', 'button');
+      card.setAttribute('aria-label', isChapter ? `进入${node.role || id}标准流程` : `查看节点 ${node.role || id}`);
 
       const roleText = node.role || (node.kind === 'command' ? '命令行工具' : '人工检查点');
-      const promptBrief = node.prompt || node.ask || (node.run ? node.run.join(' ') : '无指令说明');
-      const resolvedModel = getResolvedModel(id, node);
-      const stateEntryForModel = getStateEntry(id);
-      const modelSwapped = node.kind === 'agent' && node.model && resolvedModel && node.model !== resolvedModel;
-      const originNote = (stateEntryForModel && stateEntryForModel.model_note) ? stateEntryForModel.model_note : '';
-      const modelBadgeHtml = (node.kind === 'agent' && resolvedModel)
-        ? `<div class="node-model-row"><span class="node-model-chip ${getModelClass(resolvedModel)}" title="执行模型: ${escapeHtml(resolvedModel)}">${formatModelShort(resolvedModel)}</span>${modelSwapped ? `<span class="node-model-swap" title="${escapeHtml(originNote || `图谱声明的 ${node.model} 已按当前宿主（${hostDisplayName()}）模型档案自动适配为 ${resolvedModel}`)}">已自动适配</span>` : ''}</div>`
-        : '';
+      const promptBrief = isChapter ? '查看标准流程与本章补充 →' : node.prompt || node.ask || (node.run ? node.run.join(' ') : '无指令说明');
+      const modelHtml = node.kind === 'agent' ? `<div class="node-model-row">${modelBadgeHtml(id)}</div>` : '';
       const runningBadgeHtml = isRunning
-        ? `<div class="node-running-badge"><span class="running-dot-pulse"></span><span>正在由智能体执行中...</span></div>`
-        : '';
+        ? '<div class="node-running-badge"><span class="running-dot-pulse"></span><span>正在运行中...</span></div>' : '';
 
       card.innerHTML = `
         <div class="node-header">
           <div class="node-title-group">
-            <span class="status-indicator ${status}" title="节点状态: ${status}"></span>
-            <span class="node-title" title="${id}">${id}</span>
+            <span class="status-indicator ${status}" title="${view.statusPresentation(getStateEntry(id), isProduction()).label}"></span>
+            <span class="node-title" title="${escapeHtml(id)}">${escapeHtml(id)}</span>
           </div>
-          <span class="kind-badge kind-badge-${node.kind}">${node.kind}</span>
+          <span class="kind-badge kind-badge-${escapeHtml(node.kind)}">${isChapter ? '章节流程' : escapeHtml(node.kind)}</span>
         </div>
         <div class="node-body">
           <div class="node-role">${escapeHtml(roleText)}</div>
-          ${modelBadgeHtml}
+          <div class="node-status-text">${escapeHtml(cardStatusText(id))}</div>
+          ${isChapter ? `<div class="chapter-activity">${escapeHtml(chapterActivity(id))}</div>` : ''}
+          ${modelHtml}
           ${runningBadgeHtml}
           <div class="node-brief">${escapeHtml(promptBrief)}</div>
         </div>
@@ -944,9 +1122,10 @@
 
       // 拖拽与点击事件
       card.addEventListener('mousedown', (e) => {
-        if (e.target.classList.contains('port')) return;
+        if (e.target.classList.contains('port') || isChapter || viewLoading) return;
         if (connectingFromId) return;
         if (!selectNode(id)) return;
+        if (isProduction()) return;
         draggingNodeId = id;
         const rect = canvasViewport.getBoundingClientRect();
         const currentPos = nodePositions[id] || pos;
@@ -982,10 +1161,17 @@
 
       // 连线激活状态下，点击目标卡片主体也能完成连接
       card.addEventListener('click', (e) => {
+        if (isChapter) { navigateProduction(node.instance || id); return; }
         if (connectingFromId && connectingFromId !== id) {
           e.stopPropagation();
           completeConnectTo(id);
         }
+      });
+      card.addEventListener('keydown', e => {
+        if (e.key !== 'Enter' && e.key !== ' ') return;
+        e.preventDefault();
+        if (isChapter) navigateProduction(node.instance || id);
+        else selectNode(id);
       });
 
       nodesLayer.appendChild(card);
@@ -1012,7 +1198,7 @@
     const nodes = currentGraph.nodes;
 
     Object.keys(nodes).forEach(targetId => {
-      const after = nodes[targetId].after || [];
+      const after = view.displayAfter(currentGraph, currentProduction, targetId);
       after.forEach(sourceId => {
         if (!nodes[sourceId]) return;
         const sourcePt = getNodeCenterPort(sourceId, true);
@@ -1037,7 +1223,7 @@
         if (nodeStatus(targetId) === 'running') {
           path.classList.add('edge-active');
           path.setAttribute('marker-end', 'url(#arrow-active)');
-        } else if (stateTarget && stateTarget.status === 'current') {
+        } else if (stateTarget && ['current', 'succeeded'].includes(stateTarget.status)) {
           path.classList.add('edge-current');
           path.setAttribute('marker-end', 'url(#arrow-current)');
         } else if (stateTarget && stateTarget.status === 'stale') {
@@ -1063,7 +1249,7 @@
         });
 
         g.appendChild(path);
-        g.appendChild(delBtn);
+        if (!isProduction()) g.appendChild(delBtn);
         edgesGroup.appendChild(g);
       });
     });
@@ -1080,6 +1266,7 @@
   // 4. 连线与剪线逻辑
   // ==========================================
   function startConnectFrom(nodeId) {
+    if (isProduction() || viewLoading) return;
     connectingFromId = nodeId;
     isDragConnecting = false;
     tempEdgeStartPos = getNodeCenterPort(nodeId, true);
@@ -1111,6 +1298,7 @@
   }
 
   function completeConnectTo(targetId) {
+    if (isProduction() || viewLoading) { cancelConnect(); return; }
     if (!connectingFromId || connectingFromId === targetId) {
       cancelConnect();
       return;
@@ -1154,6 +1342,7 @@
   }
 
   function disconnectNodes(sourceId, targetId) {
+    if (isProduction() || viewLoading) return;
     const targetNode = currentGraph.nodes[targetId];
     if (!targetNode || !targetNode.after) return;
     targetNode.after = targetNode.after.filter(x => x !== sourceId);
@@ -1167,6 +1356,11 @@
   // 5. 属性检查器 Inspector
   // ==========================================
   function selectNode(id, refill = false) {
+    if (!currentGraph?.nodes[id]) return false;
+    if (currentGraph.nodes[id].kind === 'subworkflow' && isProduction()) {
+      navigateProduction(currentGraph.nodes[id].instance || id);
+      return false;
+    }
     if (!refill && selectedNodeId === id) return true;
     if (!refill && !confirmInspectorDiscard()) return false;
     selectedNodeId = id;
@@ -1181,13 +1375,8 @@
     inspectorKindBadge.textContent = node.kind;
     inspectorKindBadge.className = `kind-badge kind-badge-${node.kind}`;
 
-    const stateEntry = (currentState && currentState.nodes) ? currentState.nodes[id] : null;
-    const rawStatus = stateEntry ? stateEntry.status : 'stale';
-    const isRunning = (rawStatus === 'running') || (stateEntry && stateEntry.running);
-    const status = isRunning ? 'running' : rawStatus;
-    inspectorStatusPill.textContent = isRunning ? '⚡ 正在运行中...' : status;
-    inspectorStatusPill.className = `status-pill status-${status}`;
-    inspectorStatusReason.textContent = (stateEntry && stateEntry.staleBecause) ? stateEntry.staleBecause : (isRunning ? '智能体任务正在活跃生产中...' : '');
+    updateInspectorStatus();
+    updateViewControls();
 
     // 依赖多选渲染
     renderAfterCheckboxes(id, node.after || []);
@@ -1198,41 +1387,7 @@
     sectionHumanFields.classList.toggle('hidden', node.kind !== 'human');
 
     if (node.kind === 'agent') {
-      const stateEntry = getStateEntry(id);
-      const resolvedModel = (stateEntry && stateEntry.model) ? stateEntry.model : null;
-      const currentModel = node.model || '';
-      const knownModels = Array.from(selectNodeModel.options, option => option.value);
-      if (selectNodeModel) {
-        if (currentModel && knownModels.includes(currentModel)) {
-          selectNodeModel.value = currentModel;
-          if (fieldModel) {
-            fieldModel.value = currentModel;
-            fieldModel.classList.add('hidden');
-          }
-        } else {
-          selectNodeModel.value = 'custom';
-          if (fieldModel) {
-            fieldModel.value = currentModel;
-            fieldModel.classList.remove('hidden');
-          }
-        }
-      }
-      // 宿主适配提示行：展示状态文件解析出的实际执行模型（只读，不写回图谱）
-      const adaptEl = document.getElementById('inspectorModelAdapt');
-      if (adaptEl) {
-        if (resolvedModel) {
-          const swapped = currentModel && resolvedModel !== currentModel;
-          const note = (stateEntry && stateEntry.model_note) ? stateEntry.model_note : '';
-          adaptEl.innerHTML =
-            `<span class="node-model-chip ${getModelClass(resolvedModel)}">${formatModelShort(resolvedModel)}</span>` +
-            (swapped ? `<span class="node-model-swap">宿主已自动适配</span>` : '') +
-            (note ? `<span class="model-adapt-note">${escapeHtml(note)}</span>` : '');
-          adaptEl.classList.remove('hidden');
-        } else {
-          adaptEl.classList.add('hidden');
-          adaptEl.innerHTML = '';
-        }
-      }
+      updateInspectorModel();
       fieldRole.value = node.role || '';
       fieldPrompt.value = node.prompt || '';
       fieldSkills.value = (node.skills || []).join(', ');
@@ -1254,6 +1409,13 @@
     fieldAssertMaxWords.value = asserts.max_words || '';
     fieldAssertMinScore.value = asserts.min_score || '';
     fieldAssertScoreField.value = asserts.score_field || 'overall';
+    if (isProduction()) {
+      const supplements = chapterOverrides[id] || {};
+      document.getElementById('promptAppendGroup').classList.toggle('hidden', node.kind !== 'agent');
+      fieldPromptAppend.disabled = node.kind !== 'agent' || !viewPolicy().canEditSupplements;
+      fieldPromptAppend.value = supplements.prompt_append || '';
+      fieldInputsAdd.value = (supplements.inputs_add || []).join('\n');
+    }
 
     inspectorDrawer.classList.add('open');
     return true;
@@ -1271,8 +1433,9 @@
       const label = document.createElement('label');
       label.className = 'dep-checkbox-item';
       const checked = currentAfter.includes(nid) ? 'checked' : '';
-      label.innerHTML = `<input type="checkbox" value="${nid}" ${checked}> <span>${nid}</span>`;
+      label.innerHTML = `<input type="checkbox" value="${escapeHtml(nid)}" ${checked} ${isProduction() ? 'disabled' : ''}> <span>${escapeHtml(nid)}</span>`;
       label.querySelector('input').addEventListener('change', (e) => {
+        if (isProduction() || viewLoading) return;
         const node = currentGraph.nodes[currentNodeId];
         if (!node.after) node.after = [];
         if (e.target.checked) {
@@ -1288,8 +1451,17 @@
   }
 
   function saveCurrentNodeFromInspector(triggerBtn = null) {
-    if (!selectedNodeId || !currentGraph.nodes[selectedNodeId]) return;
+    if (viewLoading || !selectedNodeId || !currentGraph?.nodes[selectedNodeId]) return;
     const node = currentGraph.nodes[selectedNodeId];
+    if (isProduction()) {
+      if (!viewPolicy().canEditSupplements) return Promise.resolve(false);
+      chapterOverrides = view.chapterOverrides(currentGraph.nodes, chapterOverrides, selectedNodeId, {
+        prompt_append: fieldPromptAppend.value,
+        inputs_add: fieldInputsAdd.value.split(/\r?\n/)
+      });
+      inspectorDirty = false;
+      return saveGraphToServer(triggerBtn, `本章 [${currentInstance}] 补充已保存`);
+    }
 
     node.inputs = fieldInputs.value.split(',').map(s => s.trim()).filter(Boolean);
     node.outputs = fieldOutputs.value.split(',').map(s => s.trim()).filter(Boolean);
@@ -1298,11 +1470,6 @@
       node.role = fieldRole.value.trim();
       node.prompt = fieldPrompt.value;
       node.skills = fieldSkills.value.split(',').map(s => s.trim()).filter(Boolean);
-      if (selectNodeModel && !boundContext) {
-        node.model = (selectNodeModel.value === 'custom' && fieldModel)
-          ? fieldModel.value.trim()
-          : selectNodeModel.value;
-      }
     } else if (node.kind === 'command') {
       node.run = fieldRun.value.split(' ').map(s => s.trim()).filter(Boolean);
     } else if (node.kind === 'human') {
@@ -1327,7 +1494,7 @@
   }
 
   function deleteSelectedNode() {
-    if (!selectedNodeId) return;
+    if (isProduction() || viewLoading || !selectedNodeId) return;
     const id = selectedNodeId;
     if (!confirm(`确定要删除节点 [${id}] 吗？`)) return;
 
@@ -1351,14 +1518,34 @@
   // ==========================================
   // 6. 保存与后端交互
   // ==========================================
+  // 保存成功后，服务端返回的图是按固定模板重新展开并规范化的唯一权威契约。
+  // 只替换内存契约；详情输入框在存在未保存草稿时一律不重填，因此响应期间新输入不会丢，
+  // 而同 revision 的静默刷新短路后，画布与详情读到的也已经是新契约，不会与执行指令卡分叉。
+  function adoptSavedContract(data) {
+    if (!data.graph?.nodes || typeof data.graph.nodes !== 'object' || Array.isArray(data.graph.nodes)) return;
+    currentGraph = data.graph;
+    if (isProduction()) {
+      if (data.production) currentProduction = data.production;
+      chapterOverrides = JSON.parse(JSON.stringify(
+        currentProduction?.chapters?.find(ch => ch.id === currentInstance)?.overrides || {}));
+    }
+    if (!selectedNodeId || !currentGraph.nodes[selectedNodeId]) return;
+    if (inspectorDirty || viewLoading) return;
+    selectNode(selectedNodeId, true);
+  }
+
   function saveGraphToServer(triggerBtn = null, successMsg = null) {
-    if (!uiReady || !currentProject || !currentGraph) return Promise.resolve(false);
+    if (!uiReady || viewLoading || !currentProject || !currentGraph) return Promise.resolve(false);
+    const production = isProduction();
+    if (production && !viewPolicy().canEditSupplements) return Promise.resolve(false);
     graphDirty = true;
     const version = ++editVersion;
     persistedEditVersion = version;
-    const snapshot = JSON.parse(JSON.stringify(currentGraph));
+    const snapshot = production ? view.chapterOverrides(currentGraph.nodes, chapterOverrides) : view.legacyGraphForSave(currentGraph, currentState);
     const project = projectRequestValue();
     const workflow = currentWorkflow;
+    const instance = currentInstance;
+    const contextAtStart = contextVersion;
     const original = triggerBtn?.innerHTML;
     if (triggerBtn) { triggerBtn.disabled = true; triggerBtn.textContent = '正在保存...'; }
     pendingSaves++;
@@ -1366,14 +1553,20 @@
     saveQueue = saveQueue.then(async () => {
       try {
         if (saveConflict) throw new Error('磁盘版本已改变，请保留草稿或确认重新载入后再编辑');
-        const data = await requestJson('/api/graph/save', {
+        const payload = production
+          ? { project, workflow, instance, overrides: snapshot, revision: graphRevision }
+          : { project, workflow, graph: snapshot, revision: graphRevision };
+        const data = await requestJson(production ? '/api/production/chapter' : '/api/graph/save', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ project, workflow, graph: snapshot, revision: graphRevision })
+          body: JSON.stringify(payload)
         });
+        if (contextAtStart !== contextVersion || instance !== currentInstance) return false;
         if (!data.success || !data.revision) throw new Error('保存响应缺少成功标记或版本，请刷新核对磁盘');
         graphRevision = data.revision;
         if (persistedEditVersion === version) graphDirty = false;
+        adoptSavedContract(data);
         applyStateUpdate(data);
+        if (!graphDirty && !inspectorDirty && !pendingGraphRefresh) document.getElementById('studioSyncNotice').classList.add('hidden');
         appendLog(`[studio] ${workflow} 已保存，版本已更新。`);
         showToast(successMsg || `配置已保存至 ${workflow}`);
         return true;
@@ -1388,6 +1581,7 @@
       } finally {
         pendingSaves--;
         if (triggerBtn) { triggerBtn.innerHTML = original; triggerBtn.disabled = false; }
+        updateViewControls();
         if (pendingGraphRefresh) scheduleGraphRefresh();
       }
     });
@@ -1398,7 +1592,7 @@
   // 7. 任务执行与 Antigravity 派发
   // ==========================================
   async function runNode(nodeId, action = 'run_node') {
-    if (!uiReady || boundContext) {
+    if (!uiReady || viewLoading || !currentGraph || !viewPolicy().canRun) {
       showToast('请回主对话等待 supervisor 询问并明确确认执行。', 'info');
       return;
     }
@@ -1461,8 +1655,28 @@
     };
   }
 
-  function copyAgentRunPrompt() {
-    if (!uiReady || boundContext || !selectedNodeId || !currentGraph.nodes[selectedNodeId]) return;
+  async function copyAgentRunPrompt() {
+    if (!uiReady || viewLoading || !selectedNodeId || !currentGraph?.nodes[selectedNodeId]) return;
+    if (isProduction()) {
+      if (!viewPolicy().canEditSupplements) return;
+      if (hasUnsavedChanges() || pendingSaves) { showSyncNotice('请先保存本章补充，再复制包含已保存补充的指令。'); return; }
+      const contextAtStart = contextVersion;
+      const nodeId = selectedNodeId;
+      const version = editVersion;
+      try {
+        const data = await requestJson('/api/production/prompt', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ project: projectRequestValue(), workflow: currentWorkflow, instance: currentInstance, node_id: nodeId })
+        });
+        if (contextAtStart !== contextVersion || nodeId !== selectedNodeId || version !== editVersion) return;
+        if (typeof data.prompt !== 'string') throw new Error('指令响应格式无效');
+        try { await navigator.clipboard.writeText(data.prompt); }
+        catch { prompt('仅复制，不执行。请手动复制任务指令：', data.prompt); }
+        showToast('已准备只读指令；未执行生产任务。', 'info');
+      } catch (error) { reportSyncError(error); }
+      return;
+    }
+    if (boundContext) return;
     const node = currentGraph.nodes[selectedNodeId];
     const skillList = node.skills || [];
     const skillDescriptions = skillList.map(sid => {
@@ -1479,7 +1693,7 @@
     ];
     const stateEntry = getStateEntry(selectedNodeId);
     if (stateEntry && stateEntry.model) {
-      lines.push(`- 执行模型（宿主 ${hostDisplayName()} 自动适配）：${stateEntry.model}`);
+      lines.push(`- 计划模型（宿主 ${hostDisplayName()}）：${getResolvedModel(selectedNodeId)}；${view.modelPresentation(stateEntry).actual}`);
       if (stateEntry.model_note) {
         lines.push(`- ⚠ 模型适配说明：${stateEntry.model_note}`);
       }
@@ -1509,16 +1723,65 @@
   // ==========================================
   // 8. 章节审阅阅读器 (Reader)
   // ==========================================
+  // 生产阅读器只允许展示「本轮仍然有效」的产物：资格由节点状态决定，状态一变资格就可能变。
+  // 旧图没有资格概念，返回 null 表示不受限。
+  function readerEligibleFiles() {
+    return isProduction() ? view.productionOutputs(currentGraph, currentProduction, currentInstance, currentState) : null;
+  }
+
+  function readerFileEligible(filename) {
+    const eligible = readerEligibleFiles();
+    return !eligible || eligible.includes(filename);
+  }
+
+  function readerListKeyOf() {
+    const eligible = readerEligibleFiles();
+    return JSON.stringify([projectRequestValue(), currentWorkflow, currentInstance, eligible ? eligible.join('|') : null]);
+  }
+
+  function clearReaderContent(notice) {
+    currentReadingFile = '';
+    readerFileName.textContent = '未选择产物';
+    readerTextarea.value = '';
+    readerTextarea.placeholder = notice;
+    updateWordCount('');
+    updateViewControls();
+  }
+
+  // 状态刷新后同步阅读器有效性：已失效的正式稿必须立刻离开阅读器，不能继续冒充当前有效产物；
+  // 资格集合变化则让下次打开重建列表，新归档的正式稿才进得来。旧图未保存手稿一律不丢。
+  function syncReaderValidity() {
+    const key = readerListKeyOf();
+    const changed = key !== readerListKey;
+    readerListKey = key;
+    if (currentReadingFile && !readerFileEligible(currentReadingFile)) {
+      readerLoadVersion++; // 作废在途读取，迟到正文不得再写回阅读器
+      if (readerDirty) showSyncNotice('当前文件已不再是本轮有效产物；未保存手稿已保留，请自行复制后再关闭。', true);
+      else clearReaderContent('该产物已随本轮状态失效，不再作为当前有效内容展示。');
+      readerListStale = true;
+      return;
+    }
+    if (changed) readerListStale = true;
+  }
+
   async function openReaderModal() {
     readerModal.classList.remove('hidden');
-    if (currentReadingFile) return; // 再打开保留文件编辑，不重填草稿。
+    // 再打开保留文件编辑，不重填草稿；但产物资格变化后必须重建列表，否则新归档的正式稿永远进不来。
+    if (currentReadingFile && !readerListStale) return;
+    const keep = currentReadingFile && readerFileEligible(currentReadingFile) ? currentReadingFile : null;
     readerFileList.innerHTML = '';
-    readerTextarea.value = '请在左侧选择要审阅的产物文件...';
+    if (!keep) {
+      currentReadingFile = '';
+      readerFileName.textContent = '未选择产物';
+      if (!readerDirty) { readerTextarea.value = ''; updateWordCount(''); }
+    }
+    readerTextarea.placeholder = isProduction() && !currentInstance ? '请先进入一个章节，再查看该实例的产物。' : '请在左侧选择要审阅的产物文件...';
+    updateViewControls();
 
     const pad = String(currentChapter).padStart(2, '0');
-    // 优先收录当前章节或分卷工作区核心演进文稿与模块化设定
-    const filesSet = new Set();
-    if (currentWorkflow.includes('volume')) {
+    // 生产只列当前实例契约中的真实路径，不注入旧工作区默认清单。
+    const filesSet = new Set(isProduction() ? view.productionOutputs(currentGraph, currentProduction, currentInstance, currentState) : []);
+    if (!isProduction() && currentWorkflow.includes('volume')) {
       filesSet.add(`工作区/分卷策划/第${pad}卷_01_立意与核心命题.md`);
       filesSet.add(`工作区/分卷策划/第${pad}卷_02_副本物理与生存法则.md`);
       filesSet.add(`工作区/分卷策划/第${pad}卷_03_势力暗算盘与博弈矩阵.md`);
@@ -1527,7 +1790,7 @@
       filesSet.add(`工作区/分卷策划/第${pad}卷_06_伏笔生命周期总账.md`);
       filesSet.add('设定/大纲/01_全书宏观设定.md');
       filesSet.add('设定/世界观/01_法则与力量体系.md');
-    } else {
+    } else if (!isProduction()) {
       filesSet.add(`工作区/第${pad}章/03_去AI味润色稿.md`);
       filesSet.add(`工作区/第${pad}章/03_3_朱雀检测报告.md`);
       filesSet.add(`工作区/第${pad}章/04_盲审质检报告.md`);
@@ -1542,7 +1805,7 @@
       filesSet.add('资产/voice_sample.md');
     }
 
-    if (currentGraph && currentGraph.nodes) {
+    if (!isProduction() && currentGraph && currentGraph.nodes) {
       Object.values(currentGraph.nodes).forEach(n => {
         (n.outputs || []).forEach(o => filesSet.add(expandParamStr(o)));
       });
@@ -1556,19 +1819,25 @@
       readerFileList.appendChild(li);
     });
 
-    // 默认加载第一个
+    readerListStale = false;
+    readerListKey = readerListKeyOf();
+    // 默认加载第一个：仅在没有仍然有效的阅读目标时，避免覆盖未保存手稿或重复读取同一文件。
     const first = Array.from(filesSet)[0];
-    if (first) loadFileContent(first);
+    if (first && !keep) loadFileContent(first);
   }
 
   async function loadFileContent(filename) {
     if (readerDirty && !confirm('当前文件尚未保存，确定丢弃编辑并读取另一个文件吗？')) return;
+    if (viewLoading || !readerFileEligible(filename)) return;
     const version = ++readerLoadVersion;
+    const contextAtStart = contextVersion;
     readerTextarea.disabled = true;
     btnSaveReaderContent.disabled = true;
     try {
-      const data = await requestJson(`/api/chapter/read?project=${encodeURIComponent(projectRequestValue())}&file=${encodeURIComponent(filename)}`);
-      if (version !== readerLoadVersion) return;
+      const data = await requestJson(`/api/chapter/read?${contextQuery()}&file=${encodeURIComponent(filename)}`);
+      if (version !== readerLoadVersion || contextAtStart !== contextVersion) return;
+      // 读取期间该产物可能已随状态失效；迟到的正文不得再进入阅读器。
+      if (!readerFileEligible(filename)) return;
       currentReadingFile = filename;
       readerFileName.textContent = filename;
       document.querySelectorAll('.reader-file-item').forEach(el => {
@@ -1584,7 +1853,7 @@
     } finally {
       if (version === readerLoadVersion) {
         readerTextarea.disabled = false;
-        btnSaveReaderContent.disabled = !currentReadingFile;
+        btnSaveReaderContent.disabled = isProduction() || !currentReadingFile;
       }
     }
   }
@@ -1596,7 +1865,7 @@
   }
 
   async function saveReaderContent() {
-    if (!currentReadingFile || readerTextarea.disabled) return;
+    if (isProduction() || viewLoading || !currentReadingFile || readerTextarea.disabled) return;
     const file = currentReadingFile;
     const content = readerTextarea.value;
     const project = projectRequestValue();
@@ -1657,10 +1926,11 @@
     btnPrevChapter.addEventListener('click', () => switchChapter(Math.max(1, currentChapter - 1)));
     btnNextChapter.addEventListener('click', () => switchChapter(currentChapter + 1));
 
-    btnRefreshStatus.addEventListener('click', refreshGraphExplicitly);
+    btnRefreshStatus.addEventListener('click', () => refreshState().catch(reportSyncError));
     document.getElementById('btnReloadGraph').addEventListener('click', refreshGraphExplicitly);
+    document.getElementById('btnProductionRoot').addEventListener('click', () => navigateProduction(null));
     inspectorDrawer.addEventListener('focusout', () => { if (pendingGraphRefresh) scheduleGraphRefresh(); });
-    [fieldRole, fieldPrompt, fieldRun, fieldAsk, fieldInputs, fieldOutputs,
+    [fieldRole, fieldPrompt, fieldRun, fieldAsk, fieldInputs, fieldOutputs, fieldPromptAppend, fieldInputsAdd,
       fieldAssertMinWords, fieldAssertMaxWords, fieldAssertMinScore, fieldAssertScoreField].forEach(el => {
       el.addEventListener('input', markInspectorDirty);
     });
@@ -1707,29 +1977,7 @@
     });
     btnDeleteNode.addEventListener('click', deleteSelectedNode);
 
-    if (selectNodeModel) {
-      selectNodeModel.addEventListener('change', () => {
-        if (boundContext) return;
-        if (selectNodeModel.value === 'custom') {
-          if (fieldModel) {
-            fieldModel.classList.remove('hidden');
-            fieldModel.focus();
-          }
-        } else {
-          if (fieldModel) {
-            fieldModel.classList.add('hidden');
-            fieldModel.value = selectNodeModel.value;
-          }
-        }
-        markInspectorDirty();
-      });
-    }
-
-    if (fieldModel) {
-      fieldModel.addEventListener('input', () => {
-        if (!boundContext) markInspectorDirty();
-      });
-    }
+    // 模型控件保持兼容 ID，仅展示状态解析值；不再绑定编辑或保存事件。
     btnDispatchHost.addEventListener('click', () => {
       if (selectedNodeId) runNode(selectedNodeId, 'run_node');
     });
@@ -1767,7 +2015,10 @@
     btnZoomIn.addEventListener('click', () => { zoom = Math.min(2.0, zoom + 0.15); applyCanvasTransform(); });
     btnZoomOut.addEventListener('click', () => { zoom = Math.max(0.4, zoom - 0.15); applyCanvasTransform(); });
     btnZoomReset.addEventListener('click', () => { zoom = 1.0; panX = 40; panY = 60; applyCanvasTransform(); });
-    btnAutoLayout.addEventListener('click', () => { autoComputeLayout(); renderGraph(); saveGraphToServer(); });
+    btnAutoLayout.addEventListener('click', () => {
+      if (viewLoading) return;
+      autoComputeLayout(); renderGraph();
+    });
 
     canvasViewport.addEventListener('wheel', (e) => {
       e.preventDefault();
@@ -1876,7 +2127,7 @@
     btnCloseAddPathModal.addEventListener('click', () => { addPathModal.classList.add('hidden'); });
     btnConfirmAddPath.addEventListener('click', handleAddPath);
 
-    btnOpenAddNodeModal.addEventListener('click', () => { addNodeModal.classList.remove('hidden'); });
+    btnOpenAddNodeModal.addEventListener('click', () => { if (!isProduction() && !viewLoading) addNodeModal.classList.remove('hidden'); });
     btnCloseAddNodeModal.addEventListener('click', () => { addNodeModal.classList.add('hidden'); });
     btnConfirmAddNode.addEventListener('click', handleAddNode);
 
@@ -1887,6 +2138,7 @@
     });
     btnSaveReaderContent.addEventListener('click', saveReaderContent);
     readerTextarea.addEventListener('input', (e) => {
+      if (isProduction() || readerTextarea.readOnly) return;
       readerDirty = true;
       editVersion++;
       updateWordCount(e.target.value);
@@ -1946,7 +2198,7 @@
   }
 
   function handleAddNode() {
-    if (!uiReady || !currentGraph) return;
+    if (!uiReady || viewLoading || isProduction() || !currentGraph) return;
     const id = newNodeId.value.trim().replace(/\s+/g, '_').toLowerCase();
     const kind = newNodeKind.value;
     const role = newNodeRole.value.trim();

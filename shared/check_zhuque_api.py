@@ -42,6 +42,27 @@ DEFAULT_API_URL = "https://ai-gateway.edgeone.link/v1/providers/zhuque-text/clas
 API_KEY_ENV = "ZHUQUE_API_KEY"
 API_URL_ENV = "ZHUQUE_API_URL"
 
+
+def _load_api_key() -> str:
+    """读取朱雀 API Key：先看当前进程环境变量，Windows 下再回退用户级注册表。
+
+    回退注册表 (HKCU\\Environment) 的意义：用户 `setx ZHUQUE_API_KEY ...` 配置后，
+    已经在运行的 studio 服务进程无需重启即可在本节点执行时读到新 Key，
+    消除"配了 Key 却要重启整个工作台"的断点。
+    """
+    key = os.environ.get(API_KEY_ENV, "").strip()
+    if key:
+        return key
+    if os.name == "nt":
+        try:
+            import winreg
+            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, "Environment") as reg:
+                value, _ = winreg.QueryValueEx(reg, API_KEY_ENV)
+            return str(value).strip()
+        except (OSError, ImportError):
+            pass
+    return ""
+
 # labels_ratio 文档语义: 0=人工, 1=AI, 2=疑似
 LABEL_KEY_MAP = {"0": "human", "1": "ai", "2": "suspect"}
 
@@ -312,7 +333,7 @@ def main() -> int:
         print(f"Error: 无法读取输入文件 {in_path}: {e}", file=sys.stderr)
         return 1
 
-    api_key = os.environ.get(API_KEY_ENV, "").strip()
+    api_key = _load_api_key()
     api_key_masked = (api_key[:6] + "***") if len(api_key) > 6 else ("(已配置)" if api_key else "(未配置)")
     filename = in_path.name
     total_words = sum(1 for ch in text if "\u4e00" <= ch <= "\u9fff")  # 粗略 CJK 字数, 仅供报告展示

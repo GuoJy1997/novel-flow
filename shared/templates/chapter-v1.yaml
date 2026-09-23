@@ -1,0 +1,239 @@
+version: 1
+name: novel-chapter-pipeline
+params:
+  chapter_num: 1
+  chapter_title: 沉默信标
+  volume_name: 第一卷
+  genre: 科幻悬疑
+  tone: 冷峻硬核、快节奏悬疑
+  target_words: 3200
+  chapter_workspace: 工作区/第{chapter_pad}章
+  chapter_output: 正文/{volume_name}/第{chapter_pad}章_{chapter_title}.md
+  voice_sample: 资产/voice_sample.md
+nodes:
+  explore_context:
+    kind: agent
+    subagent_type: novel_context_scout
+    model_tier: flash
+    role: 小说前情、人物知情边界与伏笔整理员
+    prompt: |
+      根据已提供的项目资料，为第 {chapter_num} 章《{chapter_title}》整理写作上下文。
+      核对世界观规则、前章结果、人物当前状态、主线推进与未回收伏笔；资料缺失须明确标注，不得编造既定事实。
+      列出角色已知事实、合理推测和未知信息，注明证据来源，防止限制视角越过知情边界。
+      整理称谓、关系与言行边界，保留人物差异，不将通用情绪套路强加给角色。
+      提炼本章应推进的矛盾、需承接的线索和不可更改的事实，写出可供分场和正文共用的上下文。
+    inputs: []
+    outputs:
+    - '{chapter_workspace}/01_状态上下文.md'
+    skills:
+    - novel-context-curator
+    - novel-clue-foreshadowing
+    - novel-character-guardian
+    - novel-consistency-auditor
+    assert:
+      min_words: 200
+  scene_beats:
+    kind: agent
+    after: [explore_context]
+    model_tier: flash
+    role: 单章分场与叙事节奏设计师
+    prompt: |
+      依据前情上下文，为第 {chapter_num} 章《{chapter_title}》设计分场提纲。
+      题材为{genre}，叙事基调为{tone}，正文目标约 {target_words} 字。
+      从当下人物的处境与选择切入，为各场安排具体目标、阻力、行动、后果及必要的信息变化。
+      分场数量与篇幅服从故事需要；交替安排紧张推进与消化后果的段落，不强行将每场套成相同节拍。
+      标明视点、时间地点、人物关系变化和可感知的环境细节，让对白有动机、动作有因果。
+      章末以尚未解决的问题或人物选择自然引出后续，不凭空制造危机，不泄漏角色未知的事实。
+    inputs:
+    - '{chapter_workspace}/01_状态上下文.md'
+    outputs:
+    - '{chapter_workspace}/01_5_分场节拍表.md'
+    skills:
+    - novel-scene-tension
+    - novel-scene-pacing
+    - novel-opening-hook
+    assert:
+      min_words: 300
+  draft_chapter:
+    kind: agent
+    after: [scene_beats]
+    subagent_type: novel_chapter_writer
+    model_tier: flash
+    role: 长篇小说正文主笔
+    prompt: |
+      对照前情上下文与分场提纲，撰写第 {chapter_num} 章《{chapter_title}》完整正文，目标约 {target_words} 字。
+      保持{genre}的题材质感与{tone}的叙事基调；只输出章节正文，不把任务说明或分析写进故事。
+      严守限制视点、知情边界、人物档案与称谓规范；人物行动需有动机、代价和后果，避免突兀 OOC。
+      让对白与动作推动冲突，结合场景使用准确的感官细节，避免无依据的解说、重复抒情和机械转折。
+      节奏与段落长短服从内容，保留自然的停顿；章末承接提纲中的未解问题，不追加空泛总结。
+    inputs:
+    - '{chapter_workspace}/01_状态上下文.md'
+    - '{chapter_workspace}/01_5_分场节拍表.md'
+    outputs:
+    - '{chapter_workspace}/02_正文初稿.md'
+    skills:
+    - novel-style-narrator
+    - novel-scene-pacing
+    - novel-opening-hook
+    - novel-character-guardian
+    - novel-sensory-grounding
+    - novel-clue-foreshadowing
+    assert:
+      min_words: '{draft_min_words}'
+      max_words: '{chapter_max_words}'
+      forbidden_terms: [闭嘴, 给我闭嘴]
+  deai_polish:
+    kind: agent
+    after: [draft_chapter]
+    subagent_type: novel_deai_polisher
+    model_tier: flash
+    role: 文风校准与自然表达编辑
+    prompt: |
+      对照作者样本 {voice_sample} 润色本章初稿，维持约 {target_words} 字的篇幅和{tone}的基调。
+      保留情节事实、因果、伏笔、限制视点和人物声口，不擅自删减关键场景，不覆盖原稿或已有正式稿。
+      清理空泛抒情、重复解释、套路比喻与机械句式；用具体动作和必要的感官细节替代抽象概括。
+      句长、停顿、对白比例应服务人物与情境，不为指标强行切句、添加错字或堆砌生理反应。
+      本地粗筛非官方检测，只能提供启发式文本线索；任何检测结论都不能作为作者身份或文本来源的事实证明。
+      将完整润色稿写入指定输出，供后续检查和人工审阅。
+    inputs:
+    - '{chapter_workspace}/02_正文初稿.md'
+    - '{voice_sample}'
+    outputs:
+    - '{chapter_workspace}/03_去AI味润色稿.md'
+    skills:
+    - novel-deai-humanizer
+    - novel-sensory-grounding
+    - novel-anti-cliche
+    - novel-style-narrator
+    assert:
+      min_words: '{polish_min_words}'
+      max_words: '{chapter_max_words}'
+      forbidden_terms: [闭嘴, 给我闭嘴]
+  check_zhuque:
+    kind: command
+    after: [deai_polish]
+    role: 本地表达特征粗筛（非官方检测，不证明作者身份）
+    run:
+    - '{python_executable}'
+    - '{engine_shared}/check_humanness.py'
+    - --input
+    - '{chapter_workspace}/03_去AI味润色稿.md'
+    - --output
+    - '{chapter_workspace}/03_3_朱雀检测报告.md'
+    - --min-score
+    - '80'
+    inputs:
+    - '{chapter_workspace}/03_去AI味润色稿.md'
+    outputs:
+    - '{chapter_workspace}/03_3_朱雀检测报告.md'
+    assert:
+      min_score: 80
+      score_field: overall
+  zhuque_api_final:
+    kind: command
+    after: [check_zhuque]
+    role: 朱雀官方 API 终审门禁（外部服务，结论不证明作者身份）
+    run:
+    - '{python_executable}'
+    - '{engine_shared}/check_zhuque_api.py'
+    - --input
+    - '{chapter_workspace}/03_去AI味润色稿.md'
+    - --output
+    - '{chapter_workspace}/03_4_朱雀API终审报告.md'
+    - --min-score
+    - '60'
+    inputs:
+    - '{chapter_workspace}/03_去AI味润色稿.md'
+    outputs:
+    - '{chapter_workspace}/03_4_朱雀API终审报告.md'
+    assert:
+      min_score: 60
+      score_field: overall
+  audit_persona:
+    kind: agent
+    after: [zhuque_api_final]
+    subagent_type: novel_persona_auditor
+    model_tier: flash
+    role: 角色人设、称谓与知情边界稽查员
+    prompt: |
+      对照前情上下文与提供的人物资料，逐段审查本章润色稿的人设、动机、称谓与知情边界。
+      追查对白的信息来源，核对伤势、物品归属、时空位置及跨章事实，不将推测当作设定。
+      检查人物互动和对白节奏是否符合关系与情境，不以固定对白比例代替阅读判断。
+      引用具体句段与资料依据，区分硬冲突、待确认信息和表达建议，不直接改写正式稿。
+      末尾输出实评得分（以下仅为格式示例，不是预设结论）：
+      SCORES: {"overall": 90, "persona": 92, "addressing": 95, "epistemic_boundary": 95, "consistency": 90, "dialogue_balance": 88}
+    inputs:
+    - '{chapter_workspace}/03_去AI味润色稿.md'
+    - '{chapter_workspace}/01_状态上下文.md'
+    outputs:
+    - '{chapter_workspace}/03_5_人设审查报告.md'
+    skills:
+    - novel-character-guardian
+    - novel-consistency-auditor
+    - novel-context-curator
+    assert:
+      min_score: 80
+      score_field: overall
+      min_scores:
+        overall: 80
+        persona: 80
+        addressing: 80
+        epistemic_boundary: 80
+  review_qc:
+    kind: agent
+    after: [audit_persona]
+    subagent_type: novel_qc_reviewer
+    model_tier: pro
+    role: 小说主编与世界观一致性质检员
+    prompt: |
+      阅读本章润色稿、前情上下文和各项检查报告，结合项目资料进行逐段综合质检。
+      核对世界观硬规则、因果链、人物边界、主线推进、冗余表达、场景节奏与章末追读力。
+      本地粗筛非官方检测；官方 API 结果也只是服务的文本判断，不把检测结论当作作者身份事实。
+      区分可定位的文本问题与检测分数，不通过编造证据、降低门槛或虚构高分宣称通过。
+      给出句段证据和可执行的修改建议；末尾输出实际评分（以下仅为格式示例）：
+      SCORES: {"overall": 88, "lore": 92, "pacing": 86, "hook": 90, "ooc": 90, "addressing": 92}
+    inputs:
+    - '{chapter_workspace}/03_去AI味润色稿.md'
+    - '{chapter_workspace}/01_状态上下文.md'
+    - '{chapter_workspace}/03_3_朱雀检测报告.md'
+    - '{chapter_workspace}/03_4_朱雀API终审报告.md'
+    - '{chapter_workspace}/03_5_人设审查报告.md'
+    outputs:
+    - '{chapter_workspace}/04_盲审质检报告.md'
+    skills:
+    - novel-editorial-reviewer
+    - novel-lore-enforcer
+    - novel-consistency-auditor
+    - novel-pacing-evaluator
+    assert:
+      min_score: 80
+      score_field: overall
+  author_accept:
+    kind: human
+    after: [review_qc]
+    ask: 请作者审阅完整润色稿及全部质检报告，明确批准后才可归档为正式章节；检测结论不能证明作者身份。
+    inputs:
+    - '{chapter_workspace}/03_去AI味润色稿.md'
+    - '{chapter_workspace}/01_5_分场节拍表.md'
+    - '{chapter_workspace}/03_3_朱雀检测报告.md'
+    - '{chapter_workspace}/03_4_朱雀API终审报告.md'
+    - '{chapter_workspace}/03_5_人设审查报告.md'
+    - '{chapter_workspace}/04_盲审质检报告.md'
+    outputs:
+    - '{chapter_output}'
+  novel_stats:
+    kind: command
+    after: [author_accept]
+    run:
+    - '{python_executable}'
+    - '{engine_shared}/novel_stats.py'
+    - --project
+    - .
+    - --chapter
+    - '{chapter_output}'
+    - --output
+    - '{chapter_workspace}/05_章节统计.json'
+    inputs:
+    - '{chapter_output}'
+    outputs:
+    - '{chapter_workspace}/05_章节统计.json'

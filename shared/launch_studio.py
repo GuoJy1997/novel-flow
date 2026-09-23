@@ -105,9 +105,20 @@ def resolve_context(project: str, workflow: str = "graph.yaml",
     except ImportError as exc:
         raise LaunchError(f"Graph validation dependency missing: {exc}") from exc
     try:
+        import yaml
+        source = yaml.safe_load(text)
+        if isinstance(source, dict) and source.get('kind') == 'production':
+            import production
+            if chapter is not None:
+                raise ValueError('生产任务启动外层概览，不使用 --chapter；在工作台内选择章节')
+            production.validate_document(source, pdir)
+            return {
+                "workspace": str(root), "bound_project": pdir.name, "project_path": str(pdir),
+                "workflow": workflow, "chapter": None, "studio_protocol": STUDIO_PROTOCOL,
+            }
         graph = pipeline.load_graph(text, project_root=pdir,
                                     override_params={"chapter_num": chapter} if chapter is not None else None)
-    except (pipeline.ValidationError, ValueError, TypeError, RecursionError) as exc:
+    except (pipeline.ValidationError, ValueError, TypeError, RecursionError, yaml.YAMLError) as exc:
         raise LaunchError(f"Invalid workflow {graph_path}: {exc}") from exc
     # load_graph rejects lexical traversal; also check physical symlink targets.
     for node in graph["nodes"].values():
@@ -311,7 +322,8 @@ def launch(context: dict, *, port: int = 8766, timeout: float = 120,
             raise LaunchError("No matching studio or available port in the 20-port range")
         if not matches_service(_probe(base, deadline), context):
             raise LaunchError("Service identity changed before creating a UI session")
-        session = request_json(base + "/api/ui/session", method="POST", timeout=_remaining(deadline))
+        # 会话接口会验证完整生产快照，不能套用轻量健康探测的一秒上限。
+        session = request_json(base + "/api/ui/session", method="POST", timeout=_remaining(deadline, 30.0))
         _validate_session(session, context)
         url = base + "/?" + urllib.parse.urlencode({"launch_id": session["launch_id"]})
         print(url, file=sys.stderr, flush=True)
@@ -324,7 +336,7 @@ def launch(context: dict, *, port: int = 8766, timeout: float = 120,
                 raise LaunchError(f"Browser refused to open {url}; use --no-open with a host browser")
         while True:
             _check_child(owned)
-            request_timeout = _remaining(deadline)
+            request_timeout = _remaining(deadline, 30.0)
             try:
                 receipt = request_json(base + "/api/ui/session/" + session["launch_id"],
                                        timeout=request_timeout)

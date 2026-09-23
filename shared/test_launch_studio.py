@@ -244,6 +244,25 @@ def test_scans_for_existing_match_before_starting_on_an_earlier_free_port(rig):
     assert rig.opened == [result["url"]]
 
 
+@pytest.mark.parametrize('slow_path', ['/api/ui/session', '/api/ui/session/new-launch-1'])
+def test_snapshot_session_requests_can_exceed_one_second_within_launch_deadline(rig, monkeypatch, slow_path):
+    rig.services[8766] = rig.health()
+    request = rig.request
+
+    def slow_snapshot(url, *, method='GET', timeout=1):
+        if urlparse(url).path == slow_path:
+            rig.tick(min(1.2, timeout))
+            if timeout < 1.2:
+                raise TimeoutError('snapshot still computing')
+        return request(url, method=method, timeout=timeout)
+
+    monkeypatch.setattr(launcher, 'request_json', slow_snapshot)
+    result = rig.run()
+    assert result['status'] == 'ready'
+    assert rig.now == 1.2
+    assert len(rig.sessions) == 1
+
+
 def test_every_reuse_creates_a_new_session_and_never_posts_ready(rig):
     rig.services[8766] = rig.health()
     first = rig.run()

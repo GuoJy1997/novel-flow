@@ -221,6 +221,21 @@ def load_graph(yaml_text: str, project_root: Optional[Path] = None,
     if not isinstance(data, dict):
         raise ValidationError("graph.yaml 顶层必须是映射/字典结构")
 
+    if "template" in data:
+        if set(data) - {"version", "name", "template", "params", "overrides"}:
+            raise ValidationError("模板引用不能覆盖节点结构，只能追加章节内容")
+        import chapter_templates
+        try:
+            supplied = dict(data.get("params") or {})
+            supplied.update(override_params or {})
+            name = data.get("name")
+            data = chapter_templates.instantiate(data["template"], supplied, data.get("overrides"))
+            if name:
+                data["name"] = name
+            override_params = None  # 必须在实例化前覆盖，路径和提示词才与章号一致。
+        except (ValueError, TypeError) as exc:
+            raise ValidationError(str(exc)) from exc
+
     raw_params = data.get("params") or {}
     if not isinstance(raw_params, dict):
         raise ValidationError("params 字段若存在，必须是字典结构")
