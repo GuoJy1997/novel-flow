@@ -1,0 +1,39 @@
+层级生产引擎实施计划 — 2026-09-24
+已批准设计：本会话的唯一单章模板＋51—54串行父任务＋宿主权威模型显示。
+约束：不生成正文、不覆盖旧稿、不收费API、不提交或推送、不修改权限/AGENTS。162项基线通过，已有三个工作区改动保留。开发分支 feat/hierarchical-production；原地分支保持现有服务路径不变。使用当前可用Agent，模型参数不可用，继承会话模型，不假称模型验证。
+
+任务4：chapter_templates.py＋shared/templates/chapter-v1.yaml＋test_chapter_templates.py；修改scaffold_novel.py及demo图为引用。
+接口：load_template(template_id='chapter-v1')->dict；instantiate(template_id='chapter-v1', params=None, overrides=None, snapshot=None)->dict；reference(params=None)->dict。
+固定10节点 explore_context,scene_beats,draft_chapter,deai_polish,check_zhuque,zhuque_api_final,audit_persona,review_qc,author_accept,novel_stats。
+params允许章节内容 chapter_num,chapter_title,volume_name,genre,tone,target_words,chapter_workspace,chapter_output,voice_sample；派生chapter_pad/chapter_pad3/prev与engine_shared/python_executable不可用户覆写。覆盖仅prompt_append与inputs_add；提示词附加不能替代基础提示，输出/结构/模型/技能/断言不可改。模板快照以SHA256锁定，不存具体模型。
+测试先行：实例补全10节点、跨章隔离、拒绝模型技能结构覆盖、输入路径越界、脚手架引用保留全链。
+
+任务5：production.py＋test_production.py；pipeline.load_graph加入template引用展开（不改变旧图）。
+生产清单kind=production, version=1, id,name,template{id,hash,snapshot},binding{host,nodes},chapters[{id,params,overrides}]。
+接口create_document(name, chapters, host=None)->dict；validate_document(data,root)->dict；load_document(root,workflow)->dict；chapter_graph(doc,chapter_id)->dict；snapshot(root,workflow,instance=None)->(graph,state,revision)；save_chapter(root,workflow,instance,overrides,revision)->revision；start_node/finish_node/run_node/accept_node；CLI status/prompt/start/finish/run/accept。
+状态放 工作区/生产任务/<task_id>/state.json 内，chapters分键记录独立attempt历史。产物工作区以task＋chapter隔离。读取与刷新不写状态。运行使用文件互斥锁及原子写入，按依赖检查，保存输入/输出/定义指纹，显式finish才成功；失败及人工等待不混淆；前章完整成功才放下一章，外部改稿使成功失效。
+模型绑定由宿主创建快照；显示快照与live drift信息，执行前漂移阻止；实际模型仅带派发证据时记录，不把计划模型充当已派发。
+测试：空状态旧产物不能成功、串行阻塞、失败/重试、人工批准、输入修改失效、读不写、模型漂移、路径隔离/互斥。
+
+任务6：server.py/launch_studio.py/studio.js/studio.css/index.html与集成测试。
+沿用 /api/graph 和 /api/state，新增instance参数用于绑定父任务内下钻，仍限制项目与workflow。
+生产响应production={id,name,instance,chapters}；外层合成kind=subworkflow节点，内层是真实模板图。新增仅编辑覆盖的 /api/production/chapter（revision乐观锁）和 /api/production/prompt（只读）。旧graph/save及node运行接口不得越过生产实例限制。
+模型详情与画布统一只读计划解析，未映射明确显示。章节仅编辑prompt_append、inputs_add；禁结构/技能/命令修改。颜色灰待运行、蓝运行、绿成功、红失败、琥珀待人审；阻塞/过期单独文本。
+测试：父图/子图、拒绝其他实例/项目、越权结构保存、revision冲突、刷新状态不写、启动上下文parent chapter=None。
+
+任务7：新增D:/桃园密码/interlude-production.yaml，引用同版本10节点，51回响/52同行/53问道/54引信。以现有正文原文件路径作最终归档目标，保留旧名以免生成重复正式稿，显示标题取新大纲。仅准备清单与隔离工作区，旧图、正文、pipeline状态不变。前章正式稿显式接入下章前情。
+全套pytest、node语法测试、独立代码审查、浏览器真实下钻/编辑/刷新与就绪回执；不调用收费API，不实际启动生产。
+
+接口交叉检查：4->5 instantiate参数一致；5->6 snapshot三元组及production元信息由server封装；6->7 launcher支持kind production而chapter=None。4只改模板/脚手架/demo，5只改运行模块及pipeline入口，6只改server/ui/launcher，避免同时编辑相同文件。
+执行记录（2026-09-24）：
+- 任务4已完成：唯一10节点模板及引用、scaffold/demo/novel_clarify建书入口统一；模板＋澄清128测试通过。pipeline先红后绿接入引用展开。固定kind、人审归档源和正质量门禁新增6项红绿验证。
+- 任务5独立审查发现并复现8项缺口；worker ageneral-purpose-276ad4ea95957e06 已完成production.py/test_production.py加固，收到完成通知：输出写入基线、上游attempt代次、绑定冻结、单次bytes快照、归档事务、正式路径与前章参数；26项红测后44项通过（31+13分组），server兼容14项通过。主会话最终复验及独立整体验证进行中。
+- 任务6 UI worker完成5个文件，11纯函数测试及node语法通过；server模板脱离保护、YAML错误400、嵌套状态推送63相关测试通过。已接入snapshot(raw=bytes)与state.production，待任务5实现配套。只读reviewer ageneral-purpose-df3dea1a0f111bf5 审查界面与接口，等待通知。
+- 任务7已创建 D:/桃园密码/interlude-production.yaml，id production-67f074898275；四章各10节点、51待开始其余阻塞；计划模型前三个agent qfmodel、后三个 qmodel_38max；没有真实派发。232份原稿/旧图/工作区产物hash相同，没有state.json；基线在.qoder/interlude-baseline.json，可用.qoder/verify_interlude.py复验。
+- 浏览器验收进行中：8810真实启动ready已通过；隐藏视口390x425无法截图，鼠标中心点被浮动工具栏遮挡，只能结构/DOM事件验收，不能声称完整视觉验收。
+- 2026-09-24增补：真实接口返回chapters ID字符串导致下钻白名单失效；server以同一raw快照补全章节对象，4项红绿与18项接口测试通过。会话计算超1秒被launcher误杀；2项红绿与71项启动测试通过，session请求改为受总deadline约束的30秒上限。
+- 全套旧运行341测试通过（761秒，Starlette/httpx既有弃用警告）；新增接口/启动改动仍需最终全量复验。尚未提交或运行任何小说节点/朱雀收费API。
+- 复核裁决：快照hash证明自洽而不是防恶意本地编辑的签名；额外强制人审kind/润色归档/非空质量规则，防止误编辑消除门禁。快照不与live模板全文比较，才能保留冻结版本。
+- 真实工作台当前在http://127.0.0.1:8830/，launch_id=BsZf7tMrpaQOngclEctsGF2jnl3Y9m5c，ready回执revision=sha256:c55f24616c723dba1a6b683703391c14e2d7367c03ab9e00cd21116be390ca36。初版8810旧验收服务已识别PID19180并关闭。
+- 浏览器DOM事件验证：四章均可下钻与返回，外层3条依赖边、内层10节点9边；51补充可保存且只影响本章，临时文本已恢复并回到上述revision；52未保存编辑遇刷新与层级切换均保留，随后恢复；六节点画布和详情同源，阅读器仅9份当前工作区契约且禁止编辑/不列旧正式稿。CSS计算色验证：待开始灰、运行蓝、成功绿、失败红、人审琥珀、阻塞灰蓝、过期紫。隐藏视口无法截图，不能声称视觉通过。
+- DOM验收后复核：232份旧文件hash不变，无state.json，四章均0次attempt。前端13测试＋语法通过。最终全量任务b1dxf34rh和独立整体验证ageneral-purpose-5d7268a6cf9ef06b正在后台，等待通知，不重复派发。

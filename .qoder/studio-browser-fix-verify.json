@@ -1,0 +1,126 @@
+{
+  "steps": [
+    {
+      "step": "临时项目绑定服务启动",
+      "ok": true,
+      "detail": {
+        "status": "ok",
+        "service": "novel-pipeline-studio",
+        "workspace": "D:\\novelFlow",
+        "studio_protocol": 1,
+        "bound_project": "studio-verify-58rlqa2j",
+        "project_path": "C:\\Users\\Administrator\\AppData\\Local\\Temp\\studio-verify-58rlqa2j",
+        "workflow": "interlude-production.yaml",
+        "chapter": null
+      }
+    },
+    {
+      "step": "副本与真实项目隔离",
+      "ok": true,
+      "detail": {
+        "temp": "C:\\Users\\ADMINI~1\\AppData\\Local\\Temp\\studio-verify-58rlqa2j",
+        "source": "D:\\桃园密码"
+      }
+    },
+    {
+      "step": "外层四章串行总览",
+      "ok": true,
+      "detail": {
+        "outer_edges": 3
+      }
+    },
+    {
+      "step": "下钻第51章完整十节点",
+      "ok": true,
+      "detail": {
+        "edges": 9
+      }
+    },
+    {
+      "step": "基础提示词只读",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "step": "补充字段可编辑",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "step": "保存后详情立即采用服务端展开契约",
+      "ok": true,
+      "detail": {
+        "baseline_len": 1011,
+        "shown_len": 279
+      }
+    },
+    {
+      "step": "补充已持久化到副本 yaml",
+      "ok": true,
+      "detail": {
+        "prompt_append": "【临时验收】本章补充：保持克制，不得改变既定事实。"
+      }
+    },
+    {
+      "step": "章节补充未写进冻结模板",
+      "ok": true,
+      "detail": {
+        "template_nodes": 10,
+        "template_hash": "sha256:283c8d501a2724086015fc37fd551ee3c7661a8c469d0b64bcf5901c98267d2a",
+        "frozen_hash": "sha256:283c8d501a2724086015fc37fd551ee3c7661a8c469d0b64bcf5901c98267d2a"
+      }
+    },
+    {
+      "step": "执行指令卡包含同一补充",
+      "ok": true,
+      "detail": {
+        "len": 1216
+      }
+    },
+    {
+      "step": "画布图与详情同源",
+      "ok": true,
+      "detail": {
+        "api_len": 279,
+        "shown_len": 279
+      }
+    },
+    {
+      "step": "自动同步后详情仍为新契约",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "step": "阅读器只列本轮有效产物",
+      "ok": true,
+      "detail": {
+        "listed": [
+          "工作区/生产任务/production-67f074898275/ch051/01_状态上下文.md",
+          "工作区/生产任务/production-67f074898275/ch051/01_5_分场节拍表.md",
+          "工作区/生产任务/production-67f074898275/ch051/02_正文初稿.md",
+          "工作区/生产任务/production-67f074898275/ch051/03_去AI味润色稿.md",
+          "工作区/生产任务/production-67f074898275/ch051/03_3_朱雀检测报告.md",
+          "工作区/生产任务/production-67f074898275/ch051/03_4_朱雀API终审报告.md",
+          "工作区/生产任务/production-67f074898275/ch051/03_5_人设审查报告.md",
+          "工作区/生产任务/production-67f074898275/ch051/04_盲审质检报告.md",
+          "工作区/生产任务/production-67f074898275/ch051/05_章节统计.json"
+        ],
+        "formal_excluded": "正文/051-间隙章一-回响.md"
+      }
+    },
+    {
+      "step": "重载后补充仍在",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "step": "无页面错误",
+      "ok": true,
+      "detail": []
+    }
+  ],
+  "passed": true,
+  "page_errors": [],
+  "temp_project": "C:\\Users\\ADMINI~1\\AppData\\Local\\Temp\\studio-verify-58rlqa2j",
+  "real_project_untouched": true
+}

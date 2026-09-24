@@ -43,6 +43,7 @@ PROJECTS_DIR = STUDIO_ROOT / "projects"
 sys.path.insert(0, str(SHARED_DIR))
 
 import pipeline
+import production
 import scaffold_novel
 import memory_engine
 import subagent_registry
@@ -220,6 +221,8 @@ class _ProjectFileWatcher(FileSystemEventHandler):
             workflow = 'volume_graph.yaml' if p.name == 'volume_pipeline.json' else 'graph.yaml'
         if studio_scope.project and workflow and workflow != studio_scope.workflow:
             return
+        if studio_scope.project and workflow is None:
+            workflow = studio_scope.workflow  # 正文和嵌套实例状态也影响当前绑定任务。
         event_type = 'graph-changed' if is_graph else 'status-changed'
         message = dict(type=event_type, file=p.name, project=project_dir.name,
                        path=project_dir.as_posix(), workflow=workflow,
@@ -410,12 +413,35 @@ def _validate_graph_paths(graph, root):
     _validate_tree(root, '设定')
 
 
-def _graph_snapshot(root, workflow, chapter=None):
+def _is_production(path):
+    try:
+        data = yaml.safe_load(path.read_text(encoding='utf-8-sig'))
+        return isinstance(data, dict) and data.get('kind') == 'production'
+    except (OSError, ValueError, yaml.YAMLError):
+        return False
+
+
+def _reject_production_legacy(root, workflow):
+    if _is_production(_workflow_path(root, workflow)):
+        raise HTTPException(status_code=403, detail='生产任务使用独立实例接口；旧图接口不能更改结构或执行状态')
+
+
+def _graph_snapshot(root, workflow, chapter=None, instance=None):
     """一次读取对应一个 revision；推导状态不落盘，也不重建人工确认基线。"""
     path = _workflow_path(root, workflow)
     override = _chapter_override(chapter)
     try:
         raw = path.read_bytes()
+        source = yaml.safe_load(raw.decode('utf-8-sig'))
+        if isinstance(source, dict) and source.get('kind') == 'production':
+            if chapter is not None:
+                raise ValueError('生产任务使用 instance 下钻，不能覆盖章号')
+            graph, state, revision = production.snapshot(root, path.name, instance, raw=raw)
+            # UI 需要章节参数及已保存补充；必须取同一份已验证的 bytes，不能再读磁盘。
+            state['production'] = dict(state['production'], chapters=source['chapters'])
+            return graph, state, revision
+        if instance is not None:
+            raise ValueError('单图工作流不支持章节实例下钻')
         graph = pipeline.load_graph(raw.decode('utf-8-sig'), project_root=root, override_params=override)
         _validate_graph_paths(graph, root)
         _safe_path(root, pipeline.state_filename_for(path.name))
@@ -423,7 +449,7 @@ def _graph_snapshot(root, workflow, chapter=None):
         state = pipeline.derive_status(graph, root, old)
     except FileNotFoundError:
         raise HTTPException(status_code=404, detail='工作流文件不存在')
-    except (pipeline.ValidationError, ValueError, TypeError, UnicodeError) as exc:
+    except (pipeline.ValidationError, ValueError, TypeError, UnicodeError, yaml.YAMLError) as exc:
         raise HTTPException(status_code=400, detail=f'工作流无效: {exc}')
     return graph, state, 'sha256:' + hashlib.sha256(raw).hexdigest()
 
@@ -599,18 +625,21 @@ def list_workflows(project: str = Query(...)):
     return {"project": project, "workflows": workflows}
 
 
-def _read_graph_response(project, workflow, chapter, include_graph=True):
+def _read_graph_response(project, workflow, chapter, include_graph=True, instance=None):
     pdir = find_project_dir(project)
     path = _workflow_path(pdir, workflow)
     _chapter_override(chapter)
     if not path.is_file() and not studio_scope.project:
         return dict(project=project, workflow=path.name, hasGraph=False, graph=None, state=None)
     with _graph_lock:
-        graph, state, revision = _graph_snapshot(pdir, workflow, chapter)
+        graph, state, revision = _graph_snapshot(pdir, workflow, chapter, instance)
     response = dict(project=project, workflow=path.name, state=state, revision=revision,
-                    currentChapter=graph['params'].get('chapter_num', 1),
+                    currentChapter=graph['params'].get('chapter_num'),
                     currentVolume=graph['params'].get('volume_num', 1),
                     host=subagent_registry.detect_host().get('host'))
+    if state.get('production'):
+        response['production'] = state['production']
+        response['host'] = state['production']['binding_host']
     if include_graph:
         # 引擎推导附加的内部参数不是用户配置，不送回编辑器保存。
         for node in graph['nodes'].values():
@@ -621,14 +650,56 @@ def _read_graph_response(project, workflow, chapter, include_graph=True):
 
 @app.get('/api/graph')
 def get_graph(project: str = Query(...), chapter: Optional[int] = Query(None),
-              workflow: Optional[str] = Query('graph.yaml')):
-    return _read_graph_response(project, workflow, chapter)
+              workflow: Optional[str] = Query('graph.yaml'), instance: Optional[str] = Query(None)):
+    return _read_graph_response(project, workflow, chapter, instance=instance)
 
 
 @app.get('/api/state')
 def get_state(project: str = Query(...), chapter: Optional[int] = Query(None),
-              workflow: Optional[str] = Query('graph.yaml')):
-    return _read_graph_response(project, workflow, chapter, include_graph=False)
+              workflow: Optional[str] = Query('graph.yaml'), instance: Optional[str] = Query(None)):
+    return _read_graph_response(project, workflow, chapter, include_graph=False, instance=instance)
+
+
+class ProductionChapterRequest(BaseModel):
+    model_config = {'extra': 'forbid'}
+    project: str
+    workflow: str
+    instance: str
+    overrides: Dict[str, Any]
+    revision: str
+
+
+@app.post('/api/production/chapter')
+def save_production_chapter(req: ProductionChapterRequest):
+    root = find_project_dir(req.project)
+    path = _workflow_path(root, req.workflow)
+    try:
+        with _graph_lock:
+            revision = production.save_chapter(root, path.name, req.instance, req.overrides, req.revision)
+            response = _read_graph_response(req.project, path.name, None, instance=req.instance)
+        return dict(response, success=True, revision=revision)
+    except production.RevisionConflict as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    except (ValueError, TypeError, OSError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+class ProductionPromptRequest(BaseModel):
+    model_config = {'extra': 'forbid'}
+    project: str
+    workflow: str
+    instance: str
+    node_id: str
+
+
+@app.post('/api/production/prompt')
+def get_production_prompt(req: ProductionPromptRequest):
+    root = find_project_dir(req.project)
+    path = _workflow_path(root, req.workflow)
+    try:
+        return {'prompt': production.node_prompt(root, path.name, req.instance, req.node_id)}
+    except (ValueError, TypeError, OSError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
 
 
 @app.get("/api/chapters")
@@ -779,6 +850,7 @@ def save_graph(req: SaveGraphRequest):
     """先校验再原子替换；乐观版本锁避免覆盖宿主刚更新的图。"""
     pdir = find_project_dir(req.project)
     graph_path = _workflow_path(pdir, req.workflow)
+    _reject_production_legacy(pdir, req.workflow)
     temp_path = None
     with _graph_lock:
         try:
@@ -789,6 +861,9 @@ def save_graph(req: SaveGraphRequest):
             if studio_scope.project and req.graph.get('params', {}).get('chapter_num', studio_scope.chapter) != studio_scope.chapter:
                 raise HTTPException(status_code=403, detail='不能在绑定工作台修改目标章节')
             previous = graph_path.read_bytes() if graph_path.exists() else b''
+            existing = yaml.safe_load(previous.decode('utf-8-sig')) if previous else None
+            if isinstance(existing, dict) and 'template' in existing:
+                raise HTTPException(status_code=403, detail='固定模板引用不可由画布展开覆盖；请编辑引用的章节内容或创建生产任务')
             revision = 'sha256:' + hashlib.sha256(previous).hexdigest()
             if req.revision is not None and req.revision != revision:
                 raise HTTPException(status_code=409, detail='配置已被其他操作更新，请保留草稿并重新加载')
@@ -824,6 +899,7 @@ class NodeStatusRequest(BaseModel):
 def start_node(req: NodeStatusRequest):
     """供外部智能体/系统显式标记某节点正在执行中，触发 WebUI 画布秒级点亮。"""
     pdir = find_project_dir(req.project)
+    _reject_production_legacy(pdir, req.workflow)
     override = _chapter_override(req.chapter)
     graph_file = _workflow_path(pdir, req.workflow).name
     _graph_snapshot(pdir, graph_file, req.chapter)
@@ -835,6 +911,7 @@ def start_node(req: NodeStatusRequest):
 def finish_node(req: NodeStatusRequest):
     """供外部智能体/系统显式标记某节点执行结束，恢复/更新为最新物理状态。"""
     pdir = find_project_dir(req.project)
+    _reject_production_legacy(pdir, req.workflow)
     override = _chapter_override(req.chapter)
     graph_file = _workflow_path(pdir, req.workflow).name
     _graph_snapshot(pdir, graph_file, req.chapter)
@@ -854,6 +931,7 @@ class RunNodeRequest(BaseModel):
 def run_node(req: RunNodeRequest):
     """异步执行节点任务或派发 Agent 任务，并返回 taskId。"""
     pdir = find_project_dir(req.project)
+    _reject_production_legacy(pdir, req.workflow)
     task_id = str(uuid.uuid4())[:8]
     graph_file = req.workflow or "graph.yaml"
 
@@ -996,6 +1074,8 @@ class SaveFileRequest(BaseModel):
 def save_chapter_file(req: SaveFileRequest):
     """保存正文或草稿；状态由后续只读查询推导。"""
     pdir = find_project_dir(req.project)
+    if studio_scope.project and _is_production(_workflow_path(pdir, studio_scope.workflow)):
+        raise HTTPException(status_code=403, detail='生产工作台仅允许保存本章补充；正式稿须经过作者批准归档')
     target = _safe_path(pdir, req.file)
     # 配置和状态必须走各自的校验接口，不允许通过正文接口旁路覆盖。
     if target.suffix.lower() != '.md':

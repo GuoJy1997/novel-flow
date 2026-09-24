@@ -87,6 +87,12 @@
       <button id="btnReloadGraph" class="btn btn-secondary btn-sm" type="button">重新载入</button>
     </div>
 
+    <nav id="productionBreadcrumb" class="production-breadcrumb hidden" aria-label="生产任务层级">
+      <button id="btnProductionRoot" class="btn btn-secondary btn-sm" type="button">生产任务</button>
+      <span id="productionCurrent" aria-current="page"></span>
+      <span id="productionSummary" class="production-summary"></span>
+    </nav>
+
     <!-- 主体区域：画布视口 -->
     <main class="studio-main">
       <div id="canvasViewport" class="canvas-viewport">
@@ -138,7 +144,7 @@
             <h3 id="inspectorNodeId">节点属性</h3>
           </div>
           <div class="inspector-status-row">
-            <span id="inspectorStatusPill" class="status-pill status-stale">stale</span>
+            <span id="inspectorStatusPill" class="status-pill status-stale">已过期</span>
             <span id="inspectorStatusReason" class="status-reason"></span>
           </div>
           <button id="btnCloseInspector" class="btn-close">&times;</button>
@@ -160,20 +166,15 @@
           <!-- Agent 节点特有字段 -->
           <div id="sectionAgentFields" class="field-section">
             <div class="form-group">
-              <label for="selectNodeModel">执行模型 (Model Engine):</label>
+              <label for="selectNodeModel">计划模型（当前宿主，只读）:</label>
               <div class="model-select-wrapper">
-                <select id="selectNodeModel" class="studio-input model-select">
-                  <option value="gemini-3.8-flash-high">⚡ Gemini 3.8 Flash (High) - 正文起草/状态盘点/深度润色</option>
-                  <option value="gemini-3.8-flash-medium">⚡ Gemini 3.8 Flash (Medium) - 均衡思考/日常生成</option>
-                  <option value="gemini-3.8-flash-low">⚡ Gemini 3.8 Flash (Low) - 快速格式化/轻量摘要</option>
-                  <option value="claude-opus-4.6-thinking">🧠 Claude Opus 4.6 (Thinking) - 深度逻辑审查/防吃书</option>
-                  <option value="claude-3.7-sonnet-thinking">🧠 Claude 3.7 Sonnet (Thinking) - 宏观大纲推演</option>
-                  <option value="custom">⚙️ 自定义输入模型ID...</option>
+                <select id="selectNodeModel" class="studio-input model-select" disabled>
+                  <option value="">未配置</option>
                 </select>
-                <input type="text" id="fieldModel" class="studio-input hidden" style="margin-top:6px;" placeholder="输入自定义模型ID，例如: gemini-3.8-flash-high" />
+                <input type="text" id="fieldModel" class="studio-input" style="margin-top:6px;" readonly aria-label="当前宿主计划模型 ID" placeholder="未配置" />
               </div>
-              <div id="inspectorModelAdapt" class="model-adapt-row hidden" title="状态文件解析出的实际执行模型（由宿主自动适配，只读展示）"></div>
-              <p id="boundModelNote" class="model-readonly-note hidden">模型由当前宿主的 host_profiles 及角色绑定解析。本轮仅只读展示，不支持在网页覆写角色模型。</p>
+              <div id="inspectorModelAdapt" class="model-adapt-row" title="计划不代表实际派发；实际模型仅展示宿主提供的证据回报"></div>
+              <p id="boundModelNote" class="model-readonly-note">计划模型仅取宿主状态解析结果，不支持在网页覆写。实际派发尚未核验时不作执行模型承诺。</p>
             </div>
             <div class="form-group">
               <label for="fieldRole">担当角色 (Role):</label>
@@ -220,6 +221,18 @@
               <textarea id="fieldAsk" class="studio-textarea" rows="3" placeholder="写明作者需要核验的关注点..."></textarea>
             </div>
           </div>
+
+          <section id="productionOverrides" class="production-overrides hidden" aria-label="本章补充配置">
+            <p>标准流程与基础提示词只读。仅保存本章补充，不修改模板或执行任务。</p>
+            <div id="promptAppendGroup" class="form-group">
+              <label for="fieldPromptAppend">本章补充要求:</label>
+              <textarea id="fieldPromptAppend" class="studio-textarea" rows="5" placeholder="仅对本章生效的补充要求"></textarea>
+            </div>
+            <div class="form-group">
+              <label for="fieldInputsAdd">本章补充输入（每行一个路径）:</label>
+              <textarea id="fieldInputsAdd" class="studio-textarea" rows="3" placeholder="补充输入路径，不替换基础输入"></textarea>
+            </div>
+          </section>
 
           <!-- 输入与输出文件契约 -->
           <div class="form-group">
@@ -370,7 +383,7 @@
       <div class="modal-header">
         <div class="reader-header-title">
           <h3>📖 章节多维审阅与版本对比</h3>
-          <span id="readerFileName" class="reader-file-badge">drafts/ch_1_polished.md</span>
+          <span id="readerFileName" class="reader-file-badge">未选择产物</span>
         </div>
         <button id="btnCloseReaderModal" class="btn-close">&times;</button>
       </div>
@@ -397,6 +410,7 @@
     <span id="toastMsg" class="toast-msg">已成功保存至本地磁盘 (graph.yaml)</span>
   </div>
 
+  <script src="studio-view.js"></script>
   <script src="studio.js"></script>
 </body>
 </html>

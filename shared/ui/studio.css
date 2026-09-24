@@ -1364,3 +1364,65 @@ body.is-connecting .port-in {
     opacity: 0.6;
   }
 }
+
+/* 层级生产工作台：状态与结构边界不依赖单一保存按钮。 */
+.production-breadcrumb {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  min-height: 48px;
+  padding: 9px 20px;
+  background: var(--bg-surface);
+  border-bottom: 1px solid var(--border-color);
+  font-size: 13px;
+}
+.production-summary { margin-left: auto; color: var(--text-muted); font-size: 12px; }
+.studio-production .studio-topbar { height: auto; min-height: 54px; flex-wrap: wrap; gap: 8px; padding: 8px 16px; }
+.studio-production .topbar-actions { flex-wrap: wrap; }
+.studio-production .node-card { cursor: pointer; }
+.node-card:focus-visible { outline: 2px solid #93c5fd; outline-offset: 4px; }
+.chapter-card .node-body { padding: 16px; }
+.chapter-card .node-role { font-size: 16px; color: var(--text-main); margin-bottom: 12px; }
+.node-status-text { font-size: 12px; line-height: 1.6; margin-bottom: 5px; }
+.chapter-activity { min-height: 32px; line-height: 1.5; color: var(--text-muted); overflow-wrap: anywhere; margin: 8px 0; }
+.chapter-card .node-brief { color: #93c5fd; padding-top: 8px; border-top: 1px solid var(--border-color); }
+.model-actual-note { display: block; font-size: 10px; color: var(--text-muted); margin: 4px 0; line-height: 1.5; overflow-wrap: anywhere; }
+.node-model-chip { max-width: 100%; white-space: normal; overflow-wrap: anywhere; }
+.studio-production .node-ports,
+.studio-production .edge-delete-btn,
+.studio-production .skill-add-bar,
+.studio-production .skill-custom-bar,
+.studio-production .skill-tag-del,
+.studio-production #btnDispatchHost,
+.studio-production #btnReconcile,
+.studio-production #btnSaveReaderContent { display: none !important; }
+/* 绑定生产允许复制服务端只读指令，但始终隐藏执行按钮。 */
+.studio-bound.studio-production .inspector-action-box { display: flex !important; }
+.studio-production .studio-input:read-only,
+.studio-production .studio-textarea:read-only { color: var(--text-muted); background: var(--bg-main); }
+.production-overrides { border: 1px solid #3b506b; border-radius: var(--radius-sm); padding: 12px; background: #142338; }
+.production-overrides > p { font-size: 12px; line-height: 1.7; color: #bfdbfe; margin-bottom: 12px; }
+.production-overrides .form-group + .form-group { margin-top: 12px; }
+.status-reason { overflow-wrap: anywhere; }
+.inspector-status-row { align-items: flex-start; flex-wrap: wrap; }
+.status-pill { flex-shrink: 0; }
+.node-card.status-pending { border-left: 5px solid #94a3b8; }
+.node-card.status-succeeded { border-left: 5px solid #10b981; }
+.status-indicator.pending { background: #94a3b8; }
+.status-indicator.succeeded { background: #10b981; }
+.status-pending { color: #cbd5e1; background-color: rgba(148, 163, 184, .12); }
+.status-succeeded { color: #34d399; background-color: rgba(16, 185, 129, .12); }
+.status-pending-human { color: #fbbf24; background-color: rgba(245, 158, 11, .12); }
+.node-card.status-pending-human { border-left-color: #f59e0b; }
+.status-indicator.pending-human { background: #f59e0b; }
+.studio-production .node-card.status-stale { border-left-color: #a78bfa; }
+.studio-production .status-stale { color: #c4b5fd; background-color: rgba(167, 139, 250, .12); }
+.studio-production .status-indicator.stale { background: #a78bfa; }
+.studio-production .node-card.status-running { border-left: 5px solid #3b82f6 !important; border-color: #3b82f6 !important; animation: none; box-shadow: 0 0 0 1px rgba(59, 130, 246, .2); }
+.studio-production .status-running { background-color: rgba(59, 130, 246, .15) !important; color: #93c5fd !important; }
+.studio-production .status-indicator.running { background: #3b82f6 !important; border: none !important; animation: none !important; box-shadow: none !important; }
+@media (prefers-reduced-motion: reduce) {
+  .node-card, .status-indicator, .node-running-badge, .running-dot-pulse { animation: none !important; }
+}

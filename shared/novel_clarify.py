@@ -20,6 +20,8 @@ from typing import Any, Dict, List, Optional
 
 import yaml
 
+from chapter_templates import reference
+
 DEFAULT_BANNED_WORDS = [
     "宛如",
     "仿佛在诉说着",
@@ -490,185 +492,39 @@ def fan_out_constitution(data: NovelConstitution, project_root: Path) -> Dict[st
     workspace_ch1 = project_root / "工作区" / "第01章"
     workspace_ch1.mkdir(parents=True, exist_ok=True)
 
-    # 8. graph.yaml
+    # 8. graph.yaml：只持久化统一十节点模板引用，章级参数仅使用业务白名单。
     vol_clean = data.vol1_title.split("：")[0] if "：" in data.vol1_title else "第一卷"
-    graph_dict = {
-        "version": 1,
-        "name": f"novel-{data.slug}",
-        "params": {
-            "chapter_num": 1,
-            "chapter_pad": "01",
-            "chapter_title": "初入迷局",
-            "volume_name": vol_clean,
-            "genre": data.genre,
-            "tone": data.tone,
-            "style_archetype": data.style_archetype,
-            "classical_ratio": data.classical_ratio,
-            "psychological_depth": data.psychological_depth,
-            "target_words": data.target_words_per_chapter,
-        },
-        "nodes": {
-            "gather_state": {
-                "kind": "agent",
-                "model": "gemini-3.8-flash-high",
-                "role": "小说前置状态与伏笔总账员",
-                "prompt": (
-                    "盘点本书当前的世界观规则、人物知情状态以及未回收伏笔。\n"
-                    "提取第 {chapter_num} 章（{chapter_title}）必须推进的核心矛盾与读者信息差要点。\n"
-                    "输出简明紧凑的章节任务上下文到指定路径。"
-                ),
-                "inputs": [
-                    "novel.md",
-                    "设定/事实账本/snapshot.json",
-                    "设定/世界观/",
-                    "设定/人物/",
-                    "设定/大纲/",
-                ],
-                "outputs": [
-                    "工作区/第{chapter_pad}章/01_状态上下文.md",
-                ],
-                "skills": [
-                    "novel-memory-ledger",
-                    "novel-context-curator",
-                    "novel-clue-foreshadowing",
-                    "novel-character-guardian",
-                ],
-                "assert": {
-                    "min_words": 200,
-                },
-            },
-            "draft_chapter": {
-                "kind": "agent",
-                "after": ["gather_state"],
-                "model": "gemini-3.8-flash-high",
-                "role": "长篇小说主笔作家",
-                "prompt": (
-                    "你是一位顶级职业小说家。请严格结合工作区/第{chapter_pad}章/01_状态上下文.md 的任务要点\n"
-                    "与设定/大纲/中关于第 {chapter_num} 章剧情设定，撰写本章完整正文。\n"
-                    "严格遵守 资产/voice_sample.md 中的语言指纹：以现代通俗白话为主（90%以上），严格限制半文半白在5%~10%以内；必须强化角色的心理推演、生理恐惧应激（心跳、冷汗、窒息感）与生死情绪张力；对话带刺博弈，严禁连续200字无对白。\n"
-                    "人物言行与性格必须严密符合设定/人物/中的档案，严禁突兀 OOC 与上帝视角泄密。\n"
-                    "在正文末尾设立强烈的悬念钩子。"
-                ),
-                "skills": [
-                    "story-suspense-investigation",
-                    "novel-style-narrator",
-                    "novel-scene-pacing",
-                    "novel-opening-hook",
-                    "novel-character-guardian",
-                ],
-                "inputs": [
-                    "工作区/第{chapter_pad}章/01_状态上下文.md",
-                    "设定/人物/",
-                    "设定/世界观/",
-                ],
-                "outputs": [
-                    "工作区/第{chapter_pad}章/02_正文初稿.md",
-                ],
-                "assert": {
-                    "min_words": data.min_words,
-                    "max_words": data.max_words,
-                },
-            },
-            "deai_polish": {
-                "kind": "agent",
-                "after": ["draft_chapter"],
-                "model": "gemini-3.8-flash-high",
-                "role": "去 AI 味与文风校准专家",
-                "prompt": (
-                    "对照 资产/voice_sample.md 中的作者语言风格样本，对 工作区/第{chapter_pad}章/02_正文初稿.md 进行深度去 AI 味润色：\n"
-                    "1. 坚决粉碎大段半文半白说教，回归现代通俗白话主导（90%+），半文半白仅限5%~10%点缀；\n"
-                    "2. 深度强化生理恐惧应激（心跳狂跳、冷汗、手抖、窒息感）与高智商心理推演齿轮；\n"
-                    "3. 剔除套路AI词、无意义排比、机械递进句与说明文腔调；\n"
-                    "4. 保证正文长短句交替，严禁连续 200 字无对白；\n"
-                    "5. 将改写后的高质量定稿直接写出到指定文件。"
-                ),
-                "skills": [
-                    "story-deslop",
-                    "novel-deai-humanizer",
-                    "novel-sensory-grounding",
-                    "novel-anti-cliche",
-                ],
-                "inputs": [
-                    "工作区/第{chapter_pad}章/02_正文初稿.md",
-                    "资产/voice_sample.md",
-                ],
-                "outputs": [
-                    "工作区/第{chapter_pad}章/03_去AI味润色稿.md",
-                ],
-                "assert": {
-                    "min_words": int(data.min_words * 0.95),
-                },
-            },
-            "review_qc": {
-                "kind": "agent",
-                "after": ["deai_polish"],
-                "model": "claude-opus-4.6-thinking",
-                "role": "小说主编与防吃书质检员",
-                "prompt": (
-                    "对 工作区/第{chapter_pad}章/03_去AI味润色稿.md 进行逐段盲审质检：\n"
-                    "- 角色言行是否符合 设定/人物/（严查 OOC 与知情边界越界）；\n"
-                    "- 力量体系与物理常识是否符合 设定/世界观/（严查吃书）；\n"
-                    "- 语言风格是否符合 资产/voice_sample.md（严查半文半白堆砌与心理情感空心化，通俗白话须占90%+）；\n"
-                    "- 检查是否存在提前剧透未到期伏笔（对照 设定/大纲/03_伏笔与线索总台账.md）；\n"
-                    "- 情节节奏、爽点与章末追读力评估。\n"
-                    "定位到具体句段给出修改建议，并在报告末尾严格输出一行格式：\n"
-                    "SCORES: {\"overall\": 88, \"lore\": 92, \"ooc\": 90}"
-                ),
-                "skills": [
-                    "novel-memory-ledger",
-                    "story-review",
-                    "novel-lore-enforcer",
-                    "novel-consistency-auditor",
-                    "novel-pacing-evaluator",
-                ],
-                "inputs": [
-                    "工作区/第{chapter_pad}章/03_去AI味润色稿.md",
-                    "设定/世界观/",
-                    "设定/人物/",
-                    "设定/大纲/",
-                ],
-                "outputs": [
-                    "工作区/第{chapter_pad}章/04_盲审质检报告.md",
-                ],
-                "assert": {
-                    "score_field": "overall",
-                    "min_score": data.min_review_score,
-                },
-            },
-            "author_accept": {
-                "kind": "human",
-                "after": ["review_qc"],
-                "ask": "请创作者审阅润色稿与审查打分，确认无误后点击放行入库为正式章节。",
-                "inputs": [
-                    "工作区/第{chapter_pad}章/03_去AI味润色稿.md",
-                    "工作区/第{chapter_pad}章/04_盲审质检报告.md",
-                ],
-                "outputs": [
-                    "正文/{volume_name}/第{chapter_pad}章_{chapter_title}.md",
-                ],
-            },
-            "novel_stats": {
-                "kind": "command",
-                "after": ["author_accept"],
-                "run": [
-                    "python",
-                    "../../shared/novel_stats.py",
-                    "--project",
-                    ".",
-                    "--chapter",
-                    "正文/{volume_name}/第{chapter_pad}章_{chapter_title}.md",
-                    "--output",
-                    "工作区/第{chapter_pad}章/05_章节统计.json",
-                ],
-                "inputs": [
-                    "正文/{volume_name}/第{chapter_pad}章_{chapter_title}.md",
-                ],
-                "outputs": [
-                    "工作区/第{chapter_pad}章/05_章节统计.json",
-                ],
-            },
-        },
-    }
+    graph_dict = reference({
+        "chapter_num": 1,
+        "chapter_title": "初入迷局",
+        "volume_name": vol_clean,
+        "genre": data.genre,
+        "tone": data.tone,
+        "target_words": data.target_words_per_chapter,
+        "chapter_workspace": "工作区/第{chapter_pad}章",
+        "chapter_output": "正文/{volume_name}/第{chapter_pad}章_{chapter_title}.md",
+        "voice_sample": "资产/voice_sample.md",
+    })
+    graph_dict["name"] = f"novel-{data.slug}"
+    style_prompt = (
+        "本书文风补充：结合 novel.md 与 设定/事实账本/snapshot.json 中的用户约定执行当前任务。\n"
+        f"- 叙事视角：{data.pov}\n"
+        f"- 文风流派对标：{data.style_archetype}\n"
+        f"- 语体与文言配比：{data.classical_ratio}\n"
+        f"- 心理与情绪描写：{data.psychological_depth}\n"
+        f"- 对话风格：{data.dialogue_style}\n"
+        f"- 禁词表：{'、'.join(data.banned_words)}"
+    )
+    # 用户文风与事实资料只作追加，不改写模板的模型、技能、质量门禁或输出契约。
+    for node_id in (
+        "explore_context", "scene_beats", "draft_chapter", "deai_polish",
+        "audit_persona", "review_qc",
+    ):
+        patch = graph_dict["overrides"].setdefault(node_id, {})
+        patch["prompt_append"] = style_prompt
+        patch.setdefault("inputs_add", []).extend([
+            "novel.md", "设定/事实账本/snapshot.json",
+        ])
 
     with open(project_root / "graph.yaml", "w", encoding="utf-8") as f:
         yaml.dump(graph_dict, f, allow_unicode=True, sort_keys=False)

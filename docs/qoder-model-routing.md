@@ -25,14 +25,17 @@
 |---|---|---|
 | 内部名 | `qfmodel`、`qmodel_38max`、`kmodel_latest` | 子代理会话 config 实际记录的形式；**frontmatter 引用系统模型写这个** |
 | 显示名 | `Qwen3.8-Flash`、`Kimi-K3` | 模型选择器、hook 回显；会变拼写（Qwen-3.8-Flash→Qwen3.8-Flash），别依赖 |
-| 上游 slug | `kimi-k3`、`kimi-for-coding`、`qwen3.8-max-tp` | BYOK 渠道的 API 模型名；**frontmatter 引用自定义渠道模型写这个** |
+| 上游 slug | `kimi-k3`、`kimi-for-coding`、`qwen3.8-max-tp` | BYOK 渠道的 API 模型名；⚠ **不能写进 frontmatter**（见下方更正） |
 
 frontmatter 的值写错**不会报错**，会静默回落到会话默认模型（`gfmodel`）——最危险的坑，只能靠用量面板事后发现。
+
+> **⚠ 2026-09-22 更正（真实派发 A/B 实测，取代上表原结论）**：frontmatter 引用 BYOK 渠道模型必须写**裸 UUID**（不带 `byok:` 前缀，如 `e1584866-30e7-461c-a2aa-4c9a039a2a2b`），写上游 slug（`kimi-k3`）会**静默回落**到会话当前模型。同一 agent 定义文件两次探针：填裸 UUID → `resolvedModel=e1584866…`、`provider=kimi`；被改回 `kimi-k3` → `resolvedModel=qmodel_38max`、`provider=qoder`。即 frontmatter 只认**内置系统 ID** 与 **BYOK 裸 UUID** 两种形态。
 
 ## 3. agent / subagent 的路由机制
 
 - 定义文件两处：**用户级** `C:\Users\Administrator\.qoder\agents\*.md`（全项目共享）、**项目级** `<项目>\.qoder\agents\*.md`（仅本项目）。frontmatter 含 `name` / `description` / `model` / `tools`。
 - **路由规则**：Agent 工具派发时不带 model 参数 → frontmatter `model:` 说了算；派发时显式带 model 参数 → 单次覆盖定义。
+  > **⚠ 2026-09-24 更正**：当前 Qoder CLI 运行时的 `Agent` 派发工具**不暴露 `model` 参数**（仅有 `subagent_type`/`prompt`/`description`/`run_in_background` 等），因此**无法按调用覆盖**，模型在注册时由定义文件钉死。上面「单次覆盖」一条是 2026-09-21 在 videoProduction 的记录，与当前运行时矛盾（疑为版本差异或未真正透传）。**设计一律按「钉死」处理**，与 `subagents/manifest.json` 的 `per_call_model_override: false` 一致。详见 [qoder-subagent-model-config-guide.md](./qoder-subagent-model-config-guide.md) §1。
 - **边界**：面板 runPrompt 按钮 → 主会话直接干活，用的是主会话当时的模型，与 frontmatter 无关。frontmatter 只在"真派发子代理"时生效。
 - **生效时机**：改完定义文件要重载/重启会话才生效（启动时加载）。
 - videoProduction 的定稿路由（参考）：deai-reviewer→`kimi-k3`（自定义渠道，省会员额度）；researcher/implementer-flash→`qfmodel`；script-writer/evidence-injector/storyboard/spec-reviewer-max/code-quality-reviewer-max→`qmodel_38max`。
